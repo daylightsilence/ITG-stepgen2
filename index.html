@@ -1,0 +1,1710 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ITG StepGen</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&family=Inter:wght@300;400;500;600&display=swap');
+:root{--bg:#0a0a0f;--panel:#12121a;--border:#1e1e2e;--accent:#00f0ff;--accent2:#ff3cac;--accent3:#7b2fff;--text:#e0e0f0;--muted:#5a5a7a;--success:#00ff88;--warn:#ffb800;}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'Inter',sans-serif;font-size:14px;min-height:100dvh;display:flex;flex-direction:column;}
+header{padding:14px 22px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:14px;background:var(--panel);}
+header h1{font-family:'Orbitron',monospace;font-size:17px;font-weight:900;letter-spacing:.12em;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}
+header span{font-size:11px;color:var(--muted);letter-spacing:.06em;text-transform:uppercase;}
+.arrows{display:flex;gap:3px;margin-left:auto;}
+.arrows div{width:13px;height:13px;border-radius:2px;}
+.main{display:flex;flex:1;overflow:hidden;}
+.sidebar{width:295px;min-width:295px;background:var(--panel);border-right:1px solid var(--border);overflow-y:auto;padding:16px 13px;display:flex;flex-direction:column;gap:16px;}
+.sec{font-family:'Orbitron',monospace;font-size:9px;letter-spacing:.18em;color:var(--accent);text-transform:uppercase;margin-bottom:7px;padding-bottom:5px;border-bottom:1px solid var(--border);}
+.field{display:flex;flex-direction:column;gap:4px;margin-bottom:7px;}
+.field label{font-size:12px;color:var(--muted);display:flex;justify-content:space-between;}
+.field label span{color:var(--accent);font-weight:600;}
+input[type=text],select{background:var(--bg);border:1px solid var(--border);color:var(--text);padding:6px 9px;border-radius:4px;font-family:'Inter',sans-serif;font-size:13px;width:100%;outline:none;transition:border-color .2s;}
+input[type=text]:focus,select:focus{border-color:var(--accent);}
+input[type=range]{width:100%;accent-color:var(--accent);cursor:pointer;}
+.tog-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:7px;}
+.tog-row label:first-child{font-size:12px;color:var(--muted);}
+.toggle{position:relative;width:36px;height:20px;flex-shrink:0;}
+.toggle input{opacity:0;width:0;height:0;}
+.sl{position:absolute;inset:0;background:var(--border);border-radius:20px;cursor:pointer;transition:background .2s;}
+.sl:before{content:'';position:absolute;width:14px;height:14px;left:3px;top:3px;background:var(--muted);border-radius:50%;transition:.2s;}
+.toggle input:checked+.sl{background:var(--accent3);}
+.toggle input:checked+.sl:before{transform:translateX(16px);background:var(--accent);}
+.rules-group{font-size:9px;color:var(--accent);letter-spacing:.1em;text-transform:uppercase;margin:8px 0 4px;}
+.content{flex:1;display:flex;flex-direction:column;overflow:hidden;padding:18px;gap:14px;}
+.upload-zone{border:2px dashed var(--border);border-radius:8px;padding:28px 20px;text-align:center;cursor:pointer;transition:border-color .2s,background .2s;position:relative;}
+.upload-zone:hover,.upload-zone.drag{border-color:var(--accent);background:rgba(0,240,255,.03);}
+.upload-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.upload-zone .icon{font-size:30px;margin-bottom:7px;}
+.upload-zone h2{font-family:'Orbitron',monospace;font-size:12px;letter-spacing:.1em;margin-bottom:3px;}
+.upload-zone p{color:var(--muted);font-size:11px;}
+.art-zone{border:1px dashed var(--border);border-radius:5px;padding:10px;text-align:center;cursor:pointer;font-size:11px;color:var(--muted);position:relative;transition:border-color .2s;}
+.art-zone:hover{border-color:var(--accent2);}
+.art-zone input{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%;}
+.art-slot-preview{min-height:18px;}
+.song-info{background:var(--panel);border:1px solid var(--border);border-radius:6px;padding:11px;display:none;gap:11px;align-items:center;}
+.song-info.on{display:flex;}
+.song-art{width:52px;height:52px;border-radius:4px;background:var(--border);flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:20px;overflow:hidden;}
+.song-art img{width:100%;height:100%;object-fit:cover;}
+.song-meta h3{font-size:13px;font-weight:600;margin-bottom:2px;}
+.song-meta p{font-size:11px;color:var(--muted);}
+.bpm-badge{margin-left:auto;background:rgba(0,240,255,.1);border:1px solid var(--accent);color:var(--accent);font-family:'Orbitron',monospace;font-size:13px;font-weight:700;padding:5px 9px;border-radius:4px;white-space:nowrap;}
+.prog-wrap{background:var(--border);border-radius:4px;height:3px;overflow:hidden;margin-top:4px;}
+.prog{height:100%;background:linear-gradient(90deg,var(--accent),var(--accent2));width:0%;transition:width .3s;}
+.wave-sec{flex-direction:column;gap:5px;display:none;}
+.wave-label{font-family:'Orbitron',monospace;font-size:9px;letter-spacing:.14em;color:var(--muted);text-transform:uppercase;}
+canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border:1px solid var(--border);}
+.log-box{background:var(--panel);border:1px solid var(--border);border-radius:5px;padding:9px 11px;font-family:'Courier New',monospace;font-size:11px;color:var(--accent);min-height:60px;max-height:100px;overflow-y:auto;line-height:1.7;}
+.log-box .err{color:var(--accent2);}.log-box .ok{color:var(--success);}.log-box .warn{color:var(--warn);}
+.gen-btn{background:linear-gradient(135deg,var(--accent3),var(--accent2));color:#fff;border:none;border-radius:6px;padding:13px 24px;font-family:'Orbitron',monospace;font-size:13px;font-weight:700;letter-spacing:.12em;cursor:pointer;transition:opacity .2s,transform .1s;width:100%;}
+.gen-btn:hover{opacity:.9;}.gen-btn:active{transform:scale(.98);}.gen-btn:disabled{opacity:.4;cursor:not-allowed;}
+.dl-btn{background:linear-gradient(135deg,#007733,#00aa55);color:#fff;border:none;border-radius:6px;padding:13px 24px;font-family:'Orbitron',monospace;font-size:13px;font-weight:700;letter-spacing:.12em;cursor:pointer;transition:opacity .2s;width:100%;display:none;}
+.dl-btn:hover{opacity:.9;}.dl-btn:disabled{opacity:.4;cursor:not-allowed;}
+.diff-row{display:flex;gap:6px;flex-wrap:wrap;}
+.db{font-family:'Orbitron',monospace;font-size:10px;padding:3px 7px;border-radius:3px;border:1px solid;}
+.db.easy{color:#00ff88;border-color:#00ff88;background:rgba(0,255,136,.08);}
+.db.med{color:#ffb800;border-color:#ffb800;background:rgba(255,184,0,.08);}
+.db.hard{color:#ff3cac;border-color:#ff3cac;background:rgba(255,60,172,.08);}
+.pat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;}
+.pat-chip{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:10px;color:var(--muted);cursor:pointer;text-align:center;transition:border-color .15s,color .15s;user-select:none;}
+.pat-chip.on{border-color:var(--accent3);color:var(--text);background:rgba(123,47,255,.12);}
+.toggle-all{background:var(--bg);border:1px solid var(--accent3);color:var(--accent);font-family:'Inter',sans-serif;font-size:9px;padding:2px 8px;border-radius:3px;cursor:pointer;text-transform:none;letter-spacing:0;}
+.paint-mode{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:10px;padding:3px 10px;border-radius:3px;cursor:pointer;}
+.paint-mode.on{border-color:var(--accent);color:var(--accent);background:#00f0ff11;}
+#manualCanvas{cursor:crosshair;}
+.toggle-all:hover{background:rgba(123,47,255,.15);}
+::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
+</style>
+</head>
+<body>
+<header>
+  <div class="arrows">
+    <div style="background:#3399ff"></div><div style="background:#ff3333"></div>
+    <div style="background:#ff3333"></div><div style="background:#3399ff"></div>
+  </div>
+  <h1>ITG STEPGEN</h1>
+  <span>Stamina Chart Generator</span>
+</header>
+<div class="main">
+  <div class="sidebar">
+    <div>
+      <div class="sec">Song Info</div>
+      <div class="field"><label>Title</label><input type="text" id="songTitle" placeholder="Song Title"/></div>
+      <div class="field"><label>Artist</label><input type="text" id="songArtist" placeholder="Artist Name"/></div>
+    </div>
+    <div>
+      <div class="sec">Art</div>
+      <div style="font-size:10px;color:var(--muted);margin-bottom:6px;">Each defaults to art auto-extracted from the audio. Upload to override any individually.</div>
+      <div class="art-zone" style="margin-bottom:8px;">
+        <input type="file" id="artBanner" accept="image/*"/>
+        <div id="artBannerPreview" class="art-slot-preview">🖼 Banner (418×164)</div>
+      </div>
+      <div class="art-zone" style="margin-bottom:8px;">
+        <input type="file" id="artBg" accept="image/*"/>
+        <div id="artBgPreview" class="art-slot-preview">🖼 Background (640×480)</div>
+      </div>
+      <div class="art-zone">
+        <input type="file" id="artJacket" accept="image/*"/>
+        <div id="artJacketPreview" class="art-slot-preview">🖼 Jacket (512×512)</div>
+      </div>
+    </div>
+    <div>
+      <div class="sec">Difficulty</div>
+      <div class="field"><label>Min Block <span id="diffMinVal">4</span></label><input type="range" id="diffMin" min="1" max="12" value="4"/></div>
+      <div class="field"><label>Max Block <span id="diffMaxVal">10</span></label><input type="range" id="diffMax" min="1" max="12" value="10"/></div>
+      <div class="field"><label>Charts to generate</label>
+        <select id="diffCount">
+          <option value="1">1 — Hard only</option>
+          <option value="2">2 — Medium + Hard</option>
+          <option value="3" selected>3 — Easy + Medium + Hard</option>
+        </select>
+      </div>
+      <div class="diff-row" id="diffBadges" style="margin-top:4px"></div>
+    </div>
+    <div>
+      <div class="sec" style="display:flex;justify-content:space-between;align-items:center">Stamina Patterns<button class="toggle-all" id="toggleStamina">Toggle all</button></div>
+      <div class="pat-grid" id="patGridStamina"></div>
+      <div class="sec" style="display:flex;justify-content:space-between;align-items:center;margin-top:12px">Tech Patterns<button class="toggle-all" id="toggleTech">Toggle all</button></div>
+      <div class="pat-grid" id="patGridTech"></div>
+    </div>
+    <div>
+      <div class="sec">Stream Rules</div>
+      <div class="field"><label>Max run length (beats) <span id="maxRunVal">32</span></label><input type="range" id="maxRun" min="8" max="128" value="32" step="4"/></div>
+      <div class="field"><label>Break length (beats) <span id="minBreakVal">4</span></label><input type="range" id="minBreak" min="1" max="16" value="4"/></div>
+      <div class="field"><label>Jump density <span id="jumpDensityVal">High</span></label><input type="range" id="jumpDensity" min="0" max="4" value="3" step="1"/></div>
+      <div class="field"><label>Hold density <span id="holdDensityVal">High</span></label><input type="range" id="holdDensity" min="0" max="4" value="3" step="1"/></div>
+      <div class="field"><label>Onset sensitivity <span id="onsetSensVal">0.4</span></label><input type="range" id="onsetSens" min="0.1" max="0.9" value="0.4" step="0.05"/></div>
+      <div class="field"><label>Fine-tune offset (s) <span id="offsetVal">0.0</span></label><input type="range" id="offset" min="-0.5" max="2" value="0" step="0.05"/></div>
+    </div>
+    <div>
+      <div class="sec">Rules</div>
+      <div class="rules-group">Rhythm &amp; Sync</div>
+      <div class="tog-row"><label>ITG 9ms sync bias</label><label class="toggle"><input type="checkbox" id="rule9ms" checked/><span class="sl"></span></label></div>
+      <div class="tog-row"><label>Auto-detect beat offset</label><label class="toggle"><input type="checkbox" id="ruleAutoOffset" checked/><span class="sl"></span></label></div>
+      <div class="tog-row"><label>Snap steps to melody grid</label><label class="toggle"><input type="checkbox" id="onsetSnap" checked/><span class="sl"></span></label></div>
+      <div class="tog-row"><label>Force breaks in quiet sections</label><label class="toggle"><input type="checkbox" id="forceBreaks" checked/><span class="sl"></span></label></div>
+      <div class="rules-group">Intensity &amp; Stamina</div>
+      <div class="tog-row"><label>Stamina mode (long continuous streams)</label><label class="toggle"><input type="checkbox" id="staminaMode" checked/><span class="sl"></span></label></div>
+    </div>
+  </div>
+  <div class="content">
+    <div class="upload-zone" id="uploadZone">
+      <input type="file" id="audioFile" accept="audio/*"/>
+      <div class="icon">🎵</div>
+      <h2>DROP AUDIO FILE</h2>
+      <p>MP3 · OGG · WAV · FLAC</p>
+    </div>
+    <div class="song-info" id="songInfoBar">
+      <div class="song-art" id="songArtThumb">🎵</div>
+      <div class="song-meta" style="flex:1">
+        <h3 id="infoTitle">—</h3>
+        <p id="infoArtist">—</p>
+        <div class="prog-wrap"><div class="prog" id="analyzeProgress"></div></div>
+      </div>
+      <div class="bpm-badge" id="bpmBadge">— BPM</div>
+    </div>
+    <div class="wave-sec" id="waveSection">
+      <div class="wave-label">Waveform + Energy</div>
+      <canvas id="waveCanvas" height="80"></canvas>
+      <canvas id="energyCanvas" height="50"></canvas>
+    </div>
+    <div class="wave-sec" id="structureSection">
+      <div class="wave-label">Song Structure</div>
+      <canvas id="structureCanvas" height="28"></canvas>
+      <div id="structureLegend" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:10px;color:var(--muted)"></div>
+    </div>
+    <div class="wave-sec" id="manualSection" style="display:none">
+      <div class="wave-label" style="display:flex;justify-content:space-between;align-items:center">
+        <span>Manual Timeline — paint stream regions by measure</span>
+        <span style="display:flex;gap:6px;align-items:center">
+          <button id="manualPlayBtn" class="toggle-all" style="min-width:54px">▶ Play</button>
+          <button id="manualStopBtn" class="toggle-all">■ Stop</button>
+        </span>
+      </div>
+      <div id="manualPaintModes" style="display:flex;gap:6px;margin:4px 0;font-size:10px;flex-wrap:wrap">
+        <button class="paint-mode on" data-mode="s16">16th stream</button>
+        <button class="paint-mode" data-mode="s8">8th stream</button>
+        <button class="paint-mode" data-mode="erase">Erase</button>
+        <span id="manualHint" style="color:var(--muted);align-self:center">Click-drag across measures to paint. Unpainted = melody-follow.</span>
+      </div>
+      <canvas id="manualCanvas" height="64"></canvas>
+      <div id="manualReadout" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
+    </div>
+    <div class="wave-sec" id="densitySection">
+      <div class="wave-label">Step Density — NPS per difficulty</div>
+      <canvas id="densityCanvas" height="90"></canvas>
+      <div id="densityLegend" style="display:flex;gap:10px;flex-wrap:wrap;margin-top:4px;font-size:10px;color:var(--muted)"></div>
+    </div>
+    <div class="log-box" id="log"><span style="color:var(--muted)">Waiting for audio...</span><br/></div>
+    <button class="gen-btn" id="genBtn" disabled>⚡ PREVIEW CHART</button>
+    <button class="dl-btn" id="dlBtn">⬇ DOWNLOAD ZIP</button>
+  </div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════════════
+// PATTERN LIBRARY — 0=L 1=D 2=U 3=R  |  L/D=left foot  U/R=right foot
+// ═══════════════════════════════════════════════════════════════════
+// 0=L(left arrow) 1=D(down) 2=U(up) 3=R(right). Left foot: panels 0,1. Right foot: 2,3.
+// STAMINA patterns must strictly alternate feet (every step opposite foot — no
+// double-steps), which is what makes a real crossover-free stream. TECH patterns
+// intentionally break alternation (drills, footswitches, anchors).
+const PATTERNS = {
+  // ── STAMINA: strictly alternating (L panel ↔ R panel every step) ──
+  "Run L→R":       {seq:[0,2,1,3],          cat:"stream",  group:"stamina",minDiff:1},
+  "Run R→L":       {seq:[3,1,2,0],          cat:"stream",  group:"stamina",minDiff:1},
+  "Cross Run A":   {seq:[0,3,1,2],          cat:"stream",  group:"stamina",minDiff:2},
+  "Cross Run B":   {seq:[1,2,0,3],          cat:"stream",  group:"stamina",minDiff:2},
+  "Staircase Up":  {seq:[0,2,1,3,1,2],      cat:"stream",  group:"stamina",minDiff:2},
+  "Staircase Dn":  {seq:[3,1,2,0,2,1],      cat:"stream",  group:"stamina",minDiff:2},
+  "Zigzag A":      {seq:[0,2,0,3,1,3],      cat:"stream",  group:"stamina",minDiff:3},
+  "Zigzag B":      {seq:[3,1,3,0,2,0],      cat:"stream",  group:"stamina",minDiff:3},
+  "Box CW":        {seq:[0,2,1,3],          cat:"box",     group:"stamina",minDiff:3},
+  "Box CCW":       {seq:[1,3,0,2],          cat:"box",     group:"stamina",minDiff:3},
+  "Box Full":      {seq:[0,2,1,3,0,3,1,2],  cat:"box",     group:"stamina",minDiff:5},
+  "Spiral In":     {seq:[0,2,1,3,0,2],      cat:"spiral",  group:"stamina",minDiff:4},
+  "Spiral Out":    {seq:[1,3,0,2,1,3],      cat:"spiral",  group:"stamina",minDiff:4},
+  "Sweep A":       {seq:[0,3,0,2,1,2],      cat:"spiral",  group:"stamina",minDiff:4},
+  "Sweep B":       {seq:[3,0,3,1,2,1],      cat:"spiral",  group:"stamina",minDiff:4},
+  // ── TECH: intentionally non-alternating ──────────────────────────
+  "Gallop L":      {seq:[0,1,1,2],          cat:"gallop",     group:"tech",   minDiff:3},
+  "Gallop R":      {seq:[3,2,2,1],          cat:"gallop",     group:"tech",   minDiff:3},
+  "Candle A":      {seq:[2,0,1],            cat:"candle",     group:"tech",   minDiff:3},
+  "Candle B":      {seq:[1,3,2],            cat:"candle",     group:"tech",   minDiff:3},
+  "Crossover L":   {seq:[0,1,3,2],          cat:"crossover",  group:"tech",   minDiff:4},
+  "Crossover R":   {seq:[3,2,0,1],          cat:"crossover",  group:"tech",   minDiff:4},
+  "Drill LD":      {seq:[0,1,0,1,0,1],      cat:"drill",      group:"tech",   minDiff:4},
+  "Drill RU":      {seq:[3,2,3,2,3,2],      cat:"drill",      group:"tech",   minDiff:4},
+  "Anchor L":      {seq:[0,2,0,1,0,3],      cat:"anchor",     group:"tech",   minDiff:4},
+  "Anchor R":      {seq:[3,1,3,2,3,0],      cat:"anchor",     group:"tech",   minDiff:4},
+  "Footswitch L":  {seq:[0,0,1,2],          cat:"footswitch", group:"tech",   minDiff:5},
+  "Footswitch R":  {seq:[3,3,2,1],          cat:"footswitch", group:"tech",   minDiff:5},
+  "Sideswitch L":  {seq:[0,1,0,2,0,1],      cat:"sideswitch", group:"tech",   minDiff:6},
+  "Sideswitch R":  {seq:[3,2,3,1,3,2],      cat:"sideswitch", group:"tech",   minDiff:6},
+  "Split LU":      {seq:[0,2,1,3],          cat:"split",      group:"tech",   minDiff:7},
+  "Split DR":      {seq:[1,3,0,2],          cat:"split",      group:"tech",   minDiff:7},
+};
+
+// Tag each pattern with whether it strictly alternates feet, and validate
+// that everything labelled "stamina" really does (guards against typos).
+(function(){
+  const fo=p=>(p===0||p===1)?'L':'R';
+  Object.keys(PATTERNS).forEach(name=>{
+    const seq=PATTERNS[name].seq;
+    let alt=true;
+    for(let i=1;i<seq.length;i++) if(fo(seq[i])===fo(seq[i-1])){alt=false;break;}
+    PATTERNS[name].alt=alt;
+    if(PATTERNS[name].group==='stamina'&&!alt)
+      console.warn('Stamina pattern does not alternate:',name,seq.join(''));
+  });
+})();
+
+// Auto-generate mirrored versions (L↔R swap)
+const MIRROR_MAP = {0:3,1:2,2:1,3:0};
+Object.keys(PATTERNS).forEach(name=>{
+  const p=PATTERNS[name];
+  const m=p.seq.map(x=>MIRROR_MAP[x]);
+  const mn=name+' ⟳';
+  if(JSON.stringify(m)!==JSON.stringify(p.seq))
+    PATTERNS[mn]={seq:m,cat:p.cat,group:p.group,minDiff:p.minDiff,mirror:true};
+});
+
+// All patterns start active EXCEPT crossovers — crossovers are a deliberate
+// tech device the user opts into, so they don't leak into normal charts.
+const activePats=new Set(Object.keys(PATTERNS).filter(n=>PATTERNS[n].cat!=='crossover'));
+
+// Pattern chip UI — split by group, each with toggle-all
+(function(){
+  const grids={stamina:document.getElementById('patGridStamina'),tech:document.getElementById('patGridTech')};
+  const chipFor={};
+  Object.keys(PATTERNS).forEach(name=>{
+    const p=PATTERNS[name];
+    if(p.mirror) return;
+    const chip=document.createElement('div');
+    chip.className='pat-chip'+(activePats.has(name)?' on':'');
+    chip.textContent=name;
+    chip.title=p.cat+' · min block '+p.minDiff;
+    chip.addEventListener('click',()=>{
+      const mn=name+' ⟳';
+      if(activePats.has(name)){activePats.delete(name);activePats.delete(mn);chip.classList.remove('on');}
+      else{activePats.add(name);if(PATTERNS[mn])activePats.add(mn);chip.classList.add('on');}
+    });
+    chipFor[name]=chip;
+    (grids[p.group]||grids.stamina).appendChild(chip);
+  });
+  function makeToggleAll(group,btn){
+    btn.addEventListener('click',()=>{
+      const names=Object.keys(PATTERNS).filter(n=>!PATTERNS[n].mirror&&PATTERNS[n].group===group);
+      const anyOn=names.some(n=>activePats.has(n));
+      names.forEach(n=>{
+        const mn=n+' ⟳';
+        if(anyOn){activePats.delete(n);activePats.delete(mn);chipFor[n].classList.remove('on');}
+        else{activePats.add(n);if(PATTERNS[mn])activePats.add(mn);chipFor[n].classList.add('on');}
+      });
+      btn.textContent=anyOn?'Enable all':'Disable all';
+    });
+  }
+  makeToggleAll('stamina',document.getElementById('toggleStamina'));
+  makeToggleAll('tech',document.getElementById('toggleTech'));
+})();
+
+// ── State ─────────────────────────────────────────────────────────
+let audioBuffer=null, audioFileObj=null;
+let detectedBPM=120, detectedOffset=0;
+let energyCurve=[], onsetTimes=[], onsetStrengths=[], onsetBass=[], onsetCentroid=[], sectionMap=[], songStructure=[];
+// Spectral features from FFT pass (Phase 1). Per-frame real frequency-band
+// energies, used for onset detection, jumps, and structure.
+let specFrames=[];      // array of Float32Array(NBANDS) — band energy per frame
+let specFrameTimes=[];  // time (s) of each frame
+let specHopSec=0;       // seconds between frames
+const NBANDS=5;         // sub-bass, bass, low-mid, mid, high
+const BAND_NAMES=['subbass','bass','lowmid','mid','high'];
+let embeddedArt=null, userArtBanner=null, userArtBg=null, userArtJacket=null;
+let lastGeneratedData=null;
+
+// ── Helpers ───────────────────────────────────────────────────────
+function footOf(p){return(p===0||p===1)?'L':'R';}
+function seqValid(seq,startFoot){
+  if(!seq||!seq.length) return false;
+  return footOf(seq[0])!==startFoot; // only check starting foot
+}
+
+function log(msg,cls=''){
+  const b=document.getElementById('log');
+  const d=document.createElement('div');
+  if(cls)d.className=cls;
+  d.textContent='> '+msg;
+  b.appendChild(d);b.scrollTop=b.scrollHeight;
+}
+function clearLog(){document.getElementById('log').innerHTML='';}
+function setP(p){document.getElementById('analyzeProgress').style.width=p+'%';}
+const tick=()=>new Promise(r=>setTimeout(r,0));
+
+// ── Sliders ───────────────────────────────────────────────────────
+[['diffMin','diffMinVal',''],['diffMax','diffMaxVal',''],
+ ['maxRun','maxRunVal',''],['minBreak','minBreakVal',''],
+ ['offset','offsetVal','s'],['onsetSens','onsetSensVal','']
+].forEach(([id,vid,u])=>{
+  const el=document.getElementById(id);
+  if(!el) return;
+  el.addEventListener('input',()=>{
+    document.getElementById(vid).textContent=el.value+u;
+    updateDiffBadges();
+  });
+});
+document.getElementById('diffCount').addEventListener('change',updateDiffBadges);
+// Jump & Hold density sliders show named levels instead of a number.
+const JUMP_LABELS=['None','Low','Medium','High','Max'];
+[['jumpDensity','jumpDensityVal'],['holdDensity','holdDensityVal']].forEach(([id,vid])=>{
+  const el=document.getElementById(id);
+  if(!el)return;
+  el.addEventListener('input',()=>{document.getElementById(vid).textContent=JUMP_LABELS[+el.value]||'Medium';});
+});
+
+// ── Art (three independent slots; each falls back to embeddedArt) ──
+function wireArtSlot(inputId, previewId, setter){
+  document.getElementById(inputId).addEventListener('change',e=>{
+    const f=e.target.files[0];if(!f)return;
+    const r=new FileReader();
+    r.onload=ev=>{
+      setter(ev.target.result);
+      document.getElementById(previewId).innerHTML=`<img src="${ev.target.result}" style="width:100%;max-height:80px;object-fit:cover;border-radius:4px"/>`;
+      // keep the little song thumbnail showing whatever art is most available
+      const thumb=userArtJacket||userArtBanner||userArtBg||embeddedArt;
+      if(thumb) document.getElementById('songArtThumb').innerHTML=`<img src="${thumb}"/>`;
+    };
+    r.readAsDataURL(f);
+  });
+}
+wireArtSlot('artBanner','artBannerPreview',v=>userArtBanner=v);
+wireArtSlot('artBg','artBgPreview',v=>userArtBg=v);
+wireArtSlot('artJacket','artJacketPreview',v=>userArtJacket=v);
+// Show auto-extracted art in any slot the user hasn't overridden.
+function showAutoArt(src){
+  document.getElementById('songArtThumb').innerHTML=`<img src="${src}"/>`;
+  [['artBannerPreview',()=>userArtBanner],['artBgPreview',()=>userArtBg],['artJacketPreview',()=>userArtJacket]]
+    .forEach(([pid,get])=>{ if(!get()) document.getElementById(pid).innerHTML=`<img src="${src}" style="width:100%;max-height:80px;object-fit:cover;border-radius:4px;opacity:.85"/>`; });
+}
+
+// ── Audio upload ──────────────────────────────────────────────────
+const uz=document.getElementById('uploadZone');
+uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag');});
+uz.addEventListener('dragleave',()=>uz.classList.remove('drag'));
+uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag');const f=e.dataTransfer.files[0];if(f)handleAudio(f);});
+document.getElementById('audioFile').addEventListener('change',e=>{if(e.target.files[0])handleAudio(e.target.files[0]);});
+
+async function handleAudio(file){
+  audioFileObj=file;clearLog();log('Loading: '+file.name);
+  document.getElementById('genBtn').disabled=true;
+  document.getElementById('dlBtn').style.display='none';
+  const fname=file.name.replace(/\.[^.]+$/,'');
+  if(!document.getElementById('songTitle').value) document.getElementById('songTitle').value=fname;
+  try{await extractID3Art(file);}catch(e){}
+  let ab;try{ab=await file.arrayBuffer();}catch(e){log('Read failed: '+e.message,'err');return;}
+  const actx=new(window.AudioContext||window.webkitAudioContext)();
+  try{audioBuffer=await actx.decodeAudioData(ab);}catch(e){log('Decode failed: '+e.message,'err');return;}
+  log('Decoded: '+audioBuffer.duration.toFixed(1)+'s','ok');
+  document.getElementById('songInfoBar').classList.add('on');
+  document.getElementById('infoTitle').textContent=document.getElementById('songTitle').value||fname;
+  document.getElementById('infoArtist').textContent=document.getElementById('songArtist').value||'Unknown Artist';
+
+  setP(15);log('Spectral analysis (FFT)...');await tick();
+  try{await computeSpectralFeatures();}catch(e){log('FFT skipped: '+e.message,'warn');specFrames=[];}
+  setP(42);log('Analyzing energy...');await tick();computeEnergy();
+  setP(45);log('Detecting onsets...');await tick();computeOnsets();
+  setP(65);log('Fitting tempo + offset...');await tick();detectedBPM=detectBPM();
+  document.getElementById('bpmBadge').textContent=detectedBPM.toFixed(1)+' BPM';
+  setP(80);
+  await tick();
+  detectOffset(detectedBPM);
+  await tick();
+  log('Mapping sections...');sectionMap=buildSectionMap(detectedBPM,audioBuffer.duration);setP(88);
+  await tick();
+  log('Detecting structure...');detectSongStructure(detectedBPM,audioBuffer.duration);setP(93);
+  await tick();
+  drawWaveform();drawEnergy();drawStructure(audioBuffer.duration);
+  showManualTimeline();
+  document.getElementById('waveSection').style.display='flex';setP(100);
+  updateDiffBadges();document.getElementById('genBtn').disabled=false;log('Ready!','ok');
+}
+
+// ── ID3 art ───────────────────────────────────────────────────────
+async function extractID3Art(file){
+  const b=new Uint8Array(await file.slice(0,300000).arrayBuffer());
+  if(b[0]!==73||b[1]!==68||b[2]!==51)return;
+  for(let i=0;i<b.length-10;i++){
+    if(b[i]===65&&b[i+1]===80&&b[i+2]===73&&b[i+3]===67){
+      const fs=(b[i+4]<<24)|(b[i+5]<<16)|(b[i+6]<<8)|b[i+7];
+      let o=i+11;while(o<b.length&&b[o]!==0)o++;o++;o++;while(o<b.length&&b[o]!==0)o++;o++;
+      const img=b.slice(o,i+10+fs);
+      const mime=(img[0]===0x89&&img[1]===0x50)?'image/png':'image/jpeg';
+      const blob=new Blob([img],{type:mime});
+      embeddedArt=await new Promise(res=>{const r=new FileReader();r.onload=()=>res(r.result);r.readAsDataURL(blob);});
+      showAutoArt(embeddedArt);log('Album art extracted','ok');return;
+    }
+  }
+}
+
+// ── Spectral analysis (Phase 1: real FFT, real frequency bands) ──────
+// Runs an offline FFT over the whole song (downsampled to mono ~22kHz) and
+// extracts energy in 5 real frequency bands per frame. This replaces the old
+// fake "time-slice bands" with true frequency content, which makes onset
+// detection, jump placement (real kick detection), and structure far better.
+
+// In-place iterative radix-2 Cooley-Tukey FFT. re/im are Float32Array of
+// length N (power of 2). Transforms in place.
+function fftRadix2(re,im){
+  const n=re.length;
+  // bit-reversal permutation
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1;
+    for(;j&bit;bit>>=1)j^=bit;
+    j^=bit;
+    if(i<j){const tr=re[i];re[i]=re[j];re[j]=tr;const ti=im[i];im[i]=im[j];im[j]=ti;}
+  }
+  for(let len=2;len<=n;len<<=1){
+    const ang=-2*Math.PI/len;
+    const wr=Math.cos(ang),wi=Math.sin(ang);
+    for(let i=0;i<n;i+=len){
+      let cwr=1,cwi=0;
+      for(let k=0;k<len/2;k++){
+        const a=i+k,b=i+k+len/2;
+        const xr=re[b]*cwr-im[b]*cwi, xi=re[b]*cwi+im[b]*cwr;
+        re[b]=re[a]-xr; im[b]=im[a]-xi;
+        re[a]+=xr; im[a]+=xi;
+        const ncwr=cwr*wr-cwi*wi; cwi=cwr*wi+cwi*wr; cwr=ncwr;
+      }
+    }
+  }
+}
+
+async function computeSpectralFeatures(){
+  const srcSr=audioBuffer.sampleRate;
+  const src=audioBuffer.getChannelData(0);
+  const src2=audioBuffer.numberOfChannels>1?audioBuffer.getChannelData(1):null;
+  // Downsample to ~22kHz mono for speed (halves the work, no loss for our needs)
+  const targetSr=22050;
+  const ratio=srcSr/targetSr;
+  const dsLen=Math.floor(src.length/ratio);
+  const mono=new Float32Array(dsLen);
+  for(let i=0;i<dsLen;i++){
+    const si=Math.floor(i*ratio);
+    mono[i]=src2?(src[si]+src2[si])*0.5:src[si];
+  }
+  const sr=targetSr;
+
+  const FFT=2048, HOP=512;
+  const nFrames=Math.max(0,Math.floor((mono.length-FFT)/HOP));
+  // Hann window
+  const win=new Float32Array(FFT);
+  for(let i=0;i<FFT;i++) win[i]=0.5-0.5*Math.cos(2*Math.PI*i/(FFT-1));
+  // Band edges in Hz → FFT bin indices. bin = f / (sr/FFT)
+  const binHz=sr/FFT;
+  const edges=[20,120,250,2000,6000,sr/2]; // 5 bands between these edges
+  const bandBins=[];
+  for(let bnd=0;bnd<NBANDS;bnd++){
+    const lo=Math.max(1,Math.floor(edges[bnd]/binHz));
+    const hi=Math.min(FFT/2,Math.ceil(edges[bnd+1]/binHz));
+    bandBins.push([lo,hi]);
+  }
+
+  specFrames=[]; specFrameTimes=[]; specHopSec=HOP/sr;
+  const re=new Float32Array(FFT), im=new Float32Array(FFT);
+
+  // Process in chunks so the UI can breathe (yield every ~400 frames).
+  for(let f=0;f<nFrames;f++){
+    const base=f*HOP;
+    for(let i=0;i<FFT;i++){re[i]=mono[base+i]*win[i];im[i]=0;}
+    fftRadix2(re,im);
+    const bands=new Float32Array(NBANDS);
+    for(let bnd=0;bnd<NBANDS;bnd++){
+      const [lo,hi]=bandBins[bnd];
+      let sum=0;
+      for(let k=lo;k<hi;k++){sum+=re[k]*re[k]+im[k]*im[k];}
+      bands[bnd]=Math.sqrt(sum/Math.max(1,hi-lo));
+    }
+    specFrames.push(bands);
+    specFrameTimes.push(base/sr);
+    if((f&511)===0){setP(20+Math.round(f/nFrames*22));await tick();}
+  }
+  // Normalize each band to its own max so they're comparable 0-1.
+  const maxB=new Float32Array(NBANDS);
+  for(const fr of specFrames)for(let b=0;b<NBANDS;b++)if(fr[b]>maxB[b])maxB[b]=fr[b];
+  for(const fr of specFrames)for(let b=0;b<NBANDS;b++)fr[b]=maxB[b]?fr[b]/maxB[b]:0;
+  log('Spectral analysis: '+specFrames.length+' frames, '+NBANDS+' bands','ok');
+}
+
+// ── Energy ────────────────────────────────────────────────────────
+function computeEnergy(){
+  const d=audioBuffer.getChannelData(0),sr=audioBuffer.sampleRate;
+  const WS=Math.floor(sr*0.2),DS=16;
+  energyCurve=[];
+  for(let i=0;i<d.length-WS;i+=WS){
+    let s=0,cnt=0;
+    for(let j=i;j<i+WS&&j<d.length;j+=DS){s+=d[j]*d[j];cnt++;}
+    energyCurve.push(cnt?Math.sqrt(s/cnt):0);
+  }
+  let mx=0;for(const v of energyCurve)if(v>mx)mx=v;
+  if(mx>0)for(let i=0;i<energyCurve.length;i++)energyCurve[i]/=mx;
+}
+
+// ── Onsets ────────────────────────────────────────────────────────
+// Uses the real frequency bands from computeSpectralFeatures. Spectral flux =
+// sum of positive band-energy increases between frames (a true onset detection
+// function). Bass band drives jump detection. Falls back to the old time-domain
+// method if spectral frames aren't available.
+function computeOnsets(){
+  const sens=+document.getElementById('onsetSens').value;
+  if(specFrames.length>2){
+    const nF=specFrames.length;
+    // Band weights: emphasize percussive bands (sub-bass, bass, high/hats) for
+    // onset detection. Mids weighted lower (sustained melody flux is noisier).
+    const WGT=[2.2,2.0,1.0,1.2,1.4];
+    const flux=new Float32Array(nF);
+    for(let f=1;f<nF;f++){
+      let s=0;
+      for(let b=0;b<NBANDS;b++){
+        const diff=specFrames[f][b]-specFrames[f-1][b];
+        if(diff>0)s+=diff*WGT[b];
+      }
+      flux[f]=s;
+    }
+    // adaptive peak-pick with local-mean threshold
+    let maxF=0;for(let i=0;i<nF;i++)if(flux[i]>maxF)maxF=flux[i];
+    const PWIN=Math.max(4,Math.round(0.1/specHopSec)); // ~100ms window
+    const MGAP=Math.max(1,Math.round(0.05/specHopSec)); // 50ms min gap
+    onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];let lastPk=-MGAP;
+    const BAND_CTR=[70,185,600,4000,9000];
+    // For ADAPTIVE MELODY SENSITIVITY we also compute a melody-weighted flux that
+    // emphasizes the mid bands (vocal/lead) instead of percussion. In frames
+    // where the BEAT is weak (low sub-bass/bass energy), we lower the detection
+    // threshold and lean on this melodic flux, so soft melody/vocal hits that the
+    // percussion-tuned detector would miss still register. Busy beat-driven
+    // frames are unaffected.
+    const MEL_WGT=[0.4,0.6,1.8,2.0,1.0]; // emphasize low-mid & mid (melody/harmony)
+    const melFlux=new Float32Array(nF);
+    for(let f=1;f<nF;f++){
+      let s=0;
+      for(let b=0;b<NBANDS;b++){const d=specFrames[f][b]-specFrames[f-1][b];if(d>0)s+=d*MEL_WGT[b];}
+      melFlux[f]=s;
+    }
+    let maxMel=0;for(let i=0;i<nF;i++)if(melFlux[i]>maxMel)maxMel=melFlux[i];
+    // typical bass level, to judge what counts as a "weak beat" frame
+    const bassLevels=[];for(let i=0;i<nF;i++)bassLevels.push((specFrames[i][0]+specFrames[i][1])*0.5);
+    const bassSorted=[...bassLevels].sort((a,b)=>a-b);
+    const bassMedian=bassSorted[Math.floor(bassSorted.length*0.5)]||0;
+    for(let i=1;i<nF-1;i++){
+      // Is the beat weak here? (bass below ~70% of the song's median bass)
+      const beatWeak = bassLevels[i] < bassMedian*0.7;
+      // Pick which flux + threshold to use. In weak-beat frames use the melodic
+      // flux with a LOWER threshold so soft melody hits get caught.
+      const useFlux = beatWeak ? melFlux : flux;
+      const useMax  = beatWeak ? maxMel : maxF;
+      const v=useFlux[i];
+      let sum=0,c=0;
+      for(let j=Math.max(0,i-PWIN);j<Math.min(nF,i+PWIN);j++){sum+=useFlux[j];c++;}
+      // weak-beat frames get a gentler threshold (×0.6) so melody registers
+      const thrScale = beatWeak ? 0.21 : 0.35;
+      const thr=(sum/c)+sens*useMax*thrScale;
+      if(v>thr&&v>=useFlux[i-1]&&v>useFlux[i+1]&&i-lastPk>=MGAP){
+        onsetTimes.push(specFrameTimes[i]);
+        onsetStrengths.push(useMax?v/useMax:0);
+        onsetBass.push(Math.min(1,(specFrames[i][0]+specFrames[i][1])*0.5));
+        let num=0,den=0;
+        for(let b=0;b<NBANDS;b++){num+=specFrames[i][b]*BAND_CTR[b];den+=specFrames[i][b];}
+        onsetCentroid.push(den>0?num/den:0);
+        lastPk=i;
+      }
+    }
+    log('Onsets (spectral): '+onsetTimes.length,'ok');
+    return;
+  }
+  // ── Fallback: old time-domain method (no FFT available) ──
+  const sr=audioBuffer.sampleRate,d=audioBuffer.getChannelData(0);
+  const USE=Math.min(d.length,sr*120),HOP=1024,DS=8,BANDS=4;
+  const WGTS=[3.0,2.0,1.0,0.3];
+  const nHops=Math.floor((USE-HOP)/HOP);
+  const flux=new Float32Array(nHops),times=new Float32Array(nHops);
+  const bassEnv=new Float32Array(nHops);
+  const prev=new Float32Array(BANDS);
+  const rc=1/(2*Math.PI*150), dt=1/sr, alpha=dt/(rc+dt);
+  let lp=0;
+  for(let h=0;h<nHops;h++){
+    const base=h*HOP;times[h]=base/sr;
+    let bassRms=0,bcnt=0;
+    for(let b=0;b<BANDS;b++){
+      const s0=base+b*Math.floor(HOP/BANDS),s1=s0+Math.floor(HOP/BANDS);
+      let rms=0,cnt=0;
+      for(let i=s0;i<s1&&i<USE;i+=DS){rms+=d[i]*d[i];cnt++;}
+      const val=cnt?Math.sqrt(rms/cnt)*WGTS[b]:0;
+      const diff=val-prev[b];if(diff>0)flux[h]+=diff;prev[b]=val;
+    }
+    for(let i=base;i<base+HOP&&i<USE;i+=DS){lp+=alpha*(d[i]-lp);bassRms+=lp*lp;bcnt++;}
+    bassEnv[h]=bcnt?Math.sqrt(bassRms/bcnt):0;
+  }
+  let maxBass=0;for(let i=0;i<nHops;i++)if(bassEnv[i]>maxBass)maxBass=bassEnv[i];
+  const PWIN=10,MGAP=Math.max(1,Math.round(0.05*sr/HOP));
+  let maxF=0;for(let i=0;i<nHops;i++)if(flux[i]>maxF)maxF=flux[i];
+  onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];let lastHop=-MGAP;
+  for(let i=1;i<nHops-1;i++){
+    const v=flux[i];let sum=0;
+    for(let j=Math.max(0,i-PWIN);j<Math.min(nHops,i+PWIN);j++)sum+=flux[j];
+    const thr=(sum/(PWIN*2))+sens*maxF*0.4;
+    if(v>thr&&v>flux[i-1]&&v>flux[i+1]&&i-lastHop>=MGAP){
+      onsetTimes.push(times[i]);onsetStrengths.push(v/(maxF||1));
+      onsetBass.push(maxBass?bassEnv[i]/maxBass:0);
+      onsetCentroid.push(0); // no spectral info in fallback
+      lastHop=i;
+    }
+  }
+  log('Onsets (time-domain): '+onsetTimes.length,'ok');
+}
+
+// ── BPM + Offset — ArrowVortex-style joint fit ────────────────────
+// AV finds tempo and offset together: it sweeps candidate BPMs, and for
+// each one finds the phase (offset) where weighted onset energy best lands
+// on the beat grid. The (bpm, offset) pair with the highest alignment wins,
+// then both are refined at fine resolution. Returns BPM; stores offset in
+// detectedOffset and a candidate list in bpmCandidates.
+let bpmCandidates=[];
+function fitTempo(){
+  bpmCandidates=[];
+  if(!onsetTimes||onsetTimes.length<4){detectedOffset=0;return 120;}
+  // For performance, fit against the strongest onsets (up to 400), but keep
+  // them in time order so phase math stays correct.
+  let idx=onsetTimes.map((t,i)=>i);
+  if(idx.length>400){
+    idx.sort((a,b)=>(onsetStrengths[b]||0)-(onsetStrengths[a]||0));
+    idx=idx.slice(0,400).sort((a,b)=>a-b);
+  }
+  const T=idx.map(i=>onsetTimes[i]);
+  const S=idx.map(i=>(onsetStrengths&&onsetStrengths[i])||1);
+  const span=T[T.length-1]-T[0]||1;
+
+  // Weighted alignment score for a given period & phase.
+  // Each onset contributes strength * gaussian(distance to nearest grid line).
+  function align(period, phase){
+    let score=0, wsum=0;
+    const sigma=period*0.06; // ~6% of beat tolerance, like AV's tight snap
+    for(let i=0;i<T.length;i++){
+      const ph=((T[i]-phase)%period+period)%period;
+      const dist=Math.min(ph, period-ph);
+      score+=S[i]*Math.exp(-(dist*dist)/(2*sigma*sigma));
+      wsum+=S[i];
+    }
+    return wsum?score/wsum:0;
+  }
+  // Best phase for a period: scan 64 sub-positions, return {phase,score}.
+  function bestPhase(period){
+    let bestP=0,bestS=-1;
+    const STEPS=64;
+    for(let k=0;k<STEPS;k++){
+      const phase=k*period/STEPS;
+      const s=align(period,phase);
+      if(s>bestS){bestS=s;bestP=phase;}
+    }
+    return {phase:bestP,score:bestS};
+  }
+
+  // Coarse BPM sweep across the playable range (60–220), 0.5 BPM steps.
+  const results=[];
+  for(let bpm=60;bpm<=220;bpm+=0.5){
+    const period=60/bpm;
+    if(span/period<4) continue; // need several beats of evidence
+    const {phase,score}=bestPhase(period);
+    results.push({bpm,period,phase,score});
+  }
+  if(!results.length){detectedOffset=0;return 120;}
+
+  // Octave normalization: fold each result into 80–185 and keep the strongest
+  // representative per rounded-BPM bucket. AV reports a few distinct options.
+  results.sort((a,b)=>b.score-a.score);
+  const seen=new Map();
+  for(const r of results){
+    let bpm=r.bpm;
+    while(bpm<80)bpm*=2; while(bpm>185)bpm/=2;
+    // stamina prior nudges toward the 120–175 zone
+    const prior=(bpm>=120&&bpm<=175)?1.12:(bpm>=95&&bpm<=185?1.0:0.85);
+    const adjScore=r.score*prior;
+    const key=Math.round(bpm);
+    if(!seen.has(key)||seen.get(key).adjScore<adjScore)
+      seen.set(key,{bpm,period:60/bpm,phase:r.phase,score:r.score,adjScore});
+  }
+  let cands=[...seen.values()].sort((a,b)=>b.adjScore-a.adjScore).slice(0,5);
+
+  // Refine the top candidate: fine BPM search (±1 BPM, 0.02 steps) with
+  // re-fitted phase, then fine offset polish.
+  const best=cands[0];
+  let refBpm=best.bpm,refScore=best.score,refPhase=best.phase;
+  for(let bpm=best.bpm-1;bpm<=best.bpm+1;bpm+=0.02){
+    if(bpm<60||bpm>220)continue;
+    const period=60/bpm;
+    const {phase,score}=bestPhase(period);
+    if(score>refScore){refScore=score;refBpm=bpm;refPhase=phase;}
+  }
+  // Fine offset polish at ~1ms resolution around refPhase.
+  const period=60/refBpm;
+  let polishPhase=refPhase,polishScore=refScore;
+  for(let off=refPhase-period*0.1;off<=refPhase+period*0.1;off+=0.001){
+    const s=align(period,off);
+    if(s>polishScore){polishScore=s;polishPhase=off;}
+  }
+  // Normalize phase into [0, period) and convert to a "first beat" offset
+  // (time of the first beat). AV's #OFFSET is this value, written negative.
+  let phase=((polishPhase%period)+period)%period;
+  // The offset we want is the time gap from audio start to the first beat,
+  // which is simply the phase (first grid line at or after t=0).
+  detectedOffset=phase;
+
+  // Round BPM nicely if very close to an integer.
+  const r=Math.round(refBpm);
+  const finalBpm=Math.abs(refBpm-r)<0.04?r:Math.round(refBpm*100)/100;
+
+  bpmCandidates=cands.map(c=>({bpm:Math.round(c.bpm*100)/100,score:c.adjScore}));
+  log('Tempo fit: '+finalBpm+' BPM, offset '+(detectedOffset*1000).toFixed(1)+'ms','ok');
+  if(cands.length>1) log('Other BPM candidates: '+cands.slice(1).map(c=>c.bpm.toFixed(1)).join(', '),'');
+  log('Fit confidence: '+polishScore.toFixed(3),'ok');
+  return finalBpm;
+}
+
+// Back-compat wrappers
+function detectBPM(){return fitTempo();}
+function detectOffset(bpm){return detectedOffset;} // already set by fitTempo
+
+// ── Section map — three tiers ─────────────────────────────────────
+function buildSectionMap(bpm,duration){
+  const staminaMode=document.getElementById('staminaMode').checked;
+  const melodyThresh=+(document.getElementById('melodyThresh')?.value ?? 30)/100;
+  const beatDur=60/bpm,totalBeats=Math.floor(duration/beatDur);
+  const wPerB=beatDur/0.2;
+  const bE=[];
+  for(let b=0;b<totalBeats;b++){
+    const i0=Math.floor(b*wPerB),i1=Math.floor((b+1)*wPerB);
+    let s=0,c=0;for(let i=i0;i<i1&&i<energyCurve.length;i++){s+=energyCurve[i];c++;}
+    bE.push(c?s/c:0);
+  }
+  const sE=bE.map((_,i,a)=>{let s=0,c=0;for(let j=Math.max(0,i-3);j<=Math.min(a.length-1,i+3);j++){s+=a[j];c++;}return s/c;});
+  const sorted=[...sE].sort((a,b)=>a-b),n=sorted.length;
+  const medCut=staminaMode?Math.max(0.05,melodyThresh*0.5):Math.max(0.10,melodyThresh);
+  const slowCut=staminaMode?0.05:0.15;
+  const intenseThresh=sorted[Math.floor(n*(slowCut+medCut))];
+  const medThresh=sorted[Math.floor(n*slowCut)];
+  const map=new Array(totalBeats).fill('slow');
+  for(let b=0;b<totalBeats;b++){
+    const e=sE[b];
+    if(e>=intenseThresh)map[b]='intense';
+    else if(e>=medThresh)map[b]='medium';
+  }
+  for(let b=1;b<totalBeats-1;b++)if(map[b]!=='intense'&&map[b-1]==='intense'&&map[b+1]==='intense')map[b]='intense';
+  let b=0;
+  while(b<totalBeats){
+    if(map[b]==='intense'){let e=b;while(e<totalBeats&&map[e]==='intense')e++;if(e-b<4)for(let i=b;i<e;i++)map[i]='medium';b=e;}else b++;
+  }
+  const ic=map.filter(x=>x==='intense').length,mc=map.filter(x=>x==='medium').length,sc=map.filter(x=>x==='slow').length;
+  log('Sections — intense:'+ic+'b medium:'+mc+'b slow:'+sc+'b','ok');
+  return map;
+}
+
+// ── Song structure (self-similarity matrix) ───────────────────────
+function detectSongStructure(bpm,duration){
+  const beatDur=60/bpm,measDur=beatDur*4,SEG_MEAS=8,segDur=measDur*SEG_MEAS;
+  const numSegs=Math.floor(duration/segDur);
+  songStructure=[];
+  if(numSegs<2)return;
+  const wPS=Math.round(segDur/0.2),NF=8,slW=Math.floor(wPS/NF);
+  const feats=[];
+  for(let s=0;s<numSegs;s++){
+    const sw=Math.round((s*segDur)/0.2),fv=new Float32Array(NF);
+    for(let f=0;f<NF;f++){
+      const w0=sw+f*slW,w1=w0+slW;let sum=0,cnt=0;
+      for(let w=w0;w<w1&&w<energyCurve.length;w++){sum+=energyCurve[w];cnt++;}
+      fv[f]=cnt?sum/cnt:0;
+    }
+    let norm=0;for(let f=0;f<NF;f++)norm+=fv[f]*fv[f];norm=Math.sqrt(norm)||1;
+    for(let f=0;f<NF;f++)fv[f]/=norm;
+    feats.push(fv);
+  }
+  const sim=new Float32Array(numSegs*numSegs);
+  for(let i=0;i<numSegs;i++)for(let j=i;j<numSegs;j++){let dot=0;for(let f=0;f<NF;f++)dot+=feats[i][f]*feats[j][f];sim[i*numSegs+j]=dot;sim[j*numSegs+i]=dot;}
+  const THRESH=0.93,labels=new Int16Array(numSegs).fill(-1);let nxt=0;
+  for(let i=0;i<numSegs;i++){if(labels[i]!==-1)continue;labels[i]=nxt;for(let j=i+1;j<numSegs;j++)if(labels[j]===-1&&sim[i*numSegs+j]>=THRESH)labels[j]=nxt;nxt++;}
+  const COLORS=['#00f0ff','#ff3cac','#00ff88','#ffb800','#7b2fff','#ff6600','#00ccff','#ff0066'];
+  const NAMES='ABCDEFGHIJKLMNOP'.split('');
+  let prev=-1;
+  for(let s=0;s<numSegs;s++){
+    const lbl=labels[s],tS=s*segDur,tE=Math.min((s+1)*segDur,duration);
+    if(lbl!==prev){songStructure.push({start:tS,end:tE,label:NAMES[lbl%NAMES.length],color:COLORS[lbl%COLORS.length],structLabel:lbl});prev=lbl;}
+    else{songStructure[songStructure.length-1].end=tE;}
+  }
+  log('Structure: '+songStructure.map(s=>s.label).join(' '),'ok');
+}
+
+// ── Chart generation — ONSET-DRIVEN, melody/rhythm-following ─────────
+// Philosophy: the chart comes FROM the music, not from filling a grid.
+//   1. Every detected onset is a candidate note (the song's real rhythm).
+//   2. Difficulty = how many onsets we keep. Easy keeps only the strongest
+//      (downbeats); Hard keeps nearly all (full streams where the music is busy).
+//   3. Arrow choice follows the melody's pitch contour (spectral centroid):
+//      brighter/rising melody pushes arrows up, falling melody pushes down.
+//   4. Holds on sustained tones, jumps on strong isolated bass hits.
+//   5. Streams, breaks, and density all emerge from what the music does —
+//      so a busy chorus streams and a sparse verse breathes, automatically.
+function generateChart(block,bpm,energy,duration){
+  const diffFactor=(block-1)/11;
+  const staminaMode=document.getElementById('staminaMode')?.checked ?? true;
+  const onsetSnap=document.getElementById('onsetSnap')?.checked ?? true;     // snap notes to grid vs raw onset rows
+  const forceBreaks=document.getElementById('forceBreaks')?.checked ?? true; // insert breaks in quiet sections
+  // Run-length controls (meaningful for stamina streams): cap continuous run
+  // length and set the break length between runs.
+  const userMaxRun=+(document.getElementById('maxRun')?.value ?? 32);   // beats
+  const userMinBreak=+(document.getElementById('minBreak')?.value ?? 4); // beats
+  const leadIn=+document.getElementById('offset').value;
+  const RPB=4, beatDur=60/bpm, rowDur=beatDur/RPB;
+  const totalBeats=Math.min(Math.floor(duration/beatDur),Math.floor(600/beatDur));
+  const totalRows=totalBeats*RPB;
+  // Crossovers are only allowed when a "Crossover" tech pattern is enabled in
+  // the Tech Patterns grid. Otherwise the chart stays crossover-free (the player
+  // still pivots/faces via the center arrows, but the legs never cross).
+  const crossoversAllowed = (typeof activePats!=='undefined') &&
+    [...activePats].some(n=>PATTERNS[n] && PATTERNS[n].cat==='crossover');
+
+  const notes=new Array(totalRows).fill(-1);
+  const jumpRows={};
+
+  // ── Foot / facing / balance state ──
+  const startLeft=Math.random()<0.5;
+  let lastFoot=startLeft?'L':'R', lastPanel=startLeft?2:1;
+  const L_PANELS=[0,1], R_PANELS=[2,3];
+  const panelUse=[0,0,0,0];
+  let leftFootPanel=startLeft?0:1, rightFootPanel=startLeft?2:3;
+  const PX=[0,1,1,2]; // horizontal position of L,D,U,R
+  let recentPanels=[];
+
+  // ── CROSSOVER vs FACING (these are different things) ──
+  // FACING/PIVOT: hitting the center arrows (Up=2, Down=1) with either foot is
+  //   natural — the player just pivots. NOT a crossover.
+  // CROSSOVER: a foot reaching the OPPOSITE outer arrow — right foot to Left(0),
+  //   or left foot to Right(3) — physically crosses the legs. This is hard and
+  //   should be RARE, not a constant.
+  // Each foot's natural reach = its own outer arrow + both center arrows.
+  function isCrossover(panel,foot){
+    return (foot==='R' && panel===0) || (foot==='L' && panel===3);
+  }
+  function facingPenalty(panel,foot){
+    // When crossovers are NOT enabled they're filtered out before this. When
+    // they ARE enabled, keep them RARE — a deliberate occasional tech accent,
+    // not a constant. A penalty around 3.0 brings them to a few percent.
+    if(isCrossover(panel,foot)) return crossoversAllowed ? 3.0 : 6.0;
+    return 0;
+  }
+  // contourBias: -1 (falling → Down) .. +1 (rising → Up)
+  let recentTransitions=[];
+  let recentNotes=[]; // last committed panels, for drill (A-B-A-B) detection
+  // Drill penalty: discourage repeated two-arrow back-and-forth (A-B-A-B...).
+  // Two reps (A-B-A-B) are acceptable texture; a 3rd rep is strongly avoided,
+  // and even starting an oscillation is mildly discouraged so drills stay rare.
+  function drillPenalty(candidate){
+    const n=recentNotes;
+    const L=n.length;
+    if(L<1) return 0;
+    const a=candidate;
+    // Would this choice continue an oscillation? Look at how many alternating
+    // reps of (a,b) already precede it.
+    const b=n[L-1];
+    if(a===b) return 0; // same-panel handled elsewhere; not a 2-arrow drill
+    // count how far back the strict a,b,a,b,... alternation runs
+    let reps=0, expect=b;
+    for(let i=L-1;i>=0;i--){
+      if(n[i]===expect){reps++; expect=(expect===a?b:a);}
+      else break;
+    }
+    // reps = length of the trailing alternation that 'a' would extend.
+    // After 1 prior note (b): choosing a starts a 2-cycle → mild.
+    // After 3 (b,a,b): choosing a completes A-B-A-B (2 reps) → still ok, small.
+    // After 5 (b,a,b,a,b): choosing a makes 3 reps → strong penalty.
+    if(reps>=5) return 7.0;  // would create 3rd repetition — essentially block
+    if(reps>=3) return 1.6;  // would complete/extend a 2-rep drill — discourage
+    if(reps>=1) return 0.5;  // starting an oscillation — mild, keeps drills rare
+    return 0;
+  }
+  // Choose a panel for the given foot. A foot freely uses its home outer arrow
+  // and BOTH center arrows (natural pivoting/facing). The opposite outer arrow
+  // is a real crossover and is rare.
+  function choosePanel(candidates,foot,contourBias){
+    if(candidates.length===1){
+      const p=candidates[0];
+      recentTransitions.push(lastPanel+'>'+p); if(recentTransitions.length>6)recentTransitions.shift();
+      recentNotes.push(p); if(recentNotes.length>8)recentNotes.shift();
+      return p;
+    }
+    const maxUse=Math.max(...candidates.map(p=>panelUse[p]),1);
+    const transCount={};
+    for(const t of recentTransitions){const tp=+t.split('>')[1]; transCount[tp]=(transCount[tp]||0)+1;}
+    const weights=candidates.map(p=>{
+      const contourMag=Math.abs(contourBias||0);
+      const balance=(maxUse-panelUse[p]+1)*0.7*(1-contourMag*0.6);
+      const facePen=facingPenalty(p,foot);
+      let contour=0;
+      if(p===2) contour=(contourBias||0)*3.2;        // Up rewarded by rising melody
+      else if(p===1) contour=-(contourBias||0)*3.2;  // Down rewarded by falling melody
+      const cyclePen=(transCount[p]||0)*1.2;
+      const drillPen=drillPenalty(p);
+      const rand=Math.random()*(2.2-contourMag*1.2);
+      return Math.max(0.05, balance - facePen + contour - cyclePen - drillPen + rand);
+    });
+    let total=weights.reduce((a,b)=>a+b,0), r=Math.random()*total, chosen=candidates[candidates.length-1];
+    for(let i=0;i<candidates.length;i++){r-=weights[i];if(r<=0){chosen=candidates[i];break;}}
+    recentTransitions.push(lastPanel+'>'+chosen); if(recentTransitions.length>6)recentTransitions.shift();
+    recentNotes.push(chosen); if(recentNotes.length>8)recentNotes.shift();
+    return chosen;
+  }
+  // commit a step for a SPECIFIC foot (foot tracked independently of panel)
+  function commit(row,panel,foot){
+    notes[row]=panel;
+    lastFoot=foot; lastPanel=panel; panelUse[panel]++;
+    if(foot==='L')leftFootPanel=panel; else rightFootPanel=panel;
+    recentPanels.push(panel); if(recentPanels.length>8)recentPanels.shift();
+  }
+  // place a single tap on the opposite foot, following contour. The foot
+  // alternates; the panel it reaches is chosen from the natural reach (home
+  // outer + both center arrows). The opposite outer arrow (a crossover) is only
+  // included when crossover tech patterns are enabled.
+  function reachablePanels(foot){
+    let p=[0,1,2,3];
+    if(!crossoversAllowed) p=p.filter(x=>!isCrossover(x,foot));
+    return p;
+  }
+  function placeStep(row,contourBias){
+    if(row<0||row>=totalRows||notes[row]!==-1)return;
+    const foot=(lastFoot==='L')?'R':'L';
+    let ch=reachablePanels(foot).filter(p=>p!==lastPanel);
+    if(!ch.length)ch=reachablePanels(foot);
+    commit(row,choosePanel(ch,foot,contourBias),foot);
+  }
+  function placeHold(headRow,len,contourBias){
+    if(headRow<0||headRow>=totalRows||notes[headRow]!==-1)return;
+    const foot=(lastFoot==='L')?'R':'L';
+    let ch=reachablePanels(foot).filter(x=>x!==lastPanel);
+    if(!ch.length)ch=reachablePanels(foot);
+    const panel=choosePanel(ch,foot,contourBias);
+    const tailRow=Math.min(totalRows-1,headRow+len);
+    notes[headRow]=panel+10; notes[tailRow]=panel+20;
+    lastFoot=foot; lastPanel=panel; panelUse[panel]++;
+    if(foot==='L')leftFootPanel=panel; else rightFootPanel=panel;
+  }
+  function placeJump(row){
+    if(row<0||row>=totalRows||notes[row]!==-1||jumpRows[row])return;
+    const lp=choosePanel([0,1],'L',0), rp=choosePanel([2,3],'R',0);
+    notes[row]=lp; jumpRows[row]=[lp,rp];
+    panelUse[lp]++; panelUse[rp]++;
+    leftFootPanel=lp; rightFootPanel=rp;
+  }
+
+  // ── Build the musical event list from onsets ──
+  // Anchor the note grid to the SAME beat phase that gets written to #OFFSET,
+  // so the chart's grid and the game's playback offset agree. detectedOffset is
+  // the time of the first beat; subtracting it puts beat 0 at row 0, beat 1 at
+  // row 4, etc. (onsets on the beat → quarter-note rows). leadIn is the user's
+  // manual fine-tune on top of that.
+  const gridAnchor = (document.getElementById('ruleAutoOffset')?.checked ?? true) ? detectedOffset : 0;
+  const events=[];
+  if(onsetTimes.length){
+    for(let i=0;i<onsetTimes.length;i++){
+      const t=onsetTimes[i]-gridAnchor-leadIn;
+      if(t<-rowDur*0.5) continue; // allow a tiny pre-beat tolerance
+      const row=Math.round(t/rowDur);
+      if(row<0||row>=totalRows) continue;
+      const gap=(i+1<onsetTimes.length?onsetTimes[i+1]-onsetTimes[i]:beatDur*2);
+      events.push({
+        row,
+        strength:onsetStrengths[i]||0,
+        bass:onsetBass[i]||0,
+        centroid:onsetCentroid[i]||0,
+        gap
+      });
+    }
+  }
+  // de-dup onsets landing on the same row (keep strongest)
+  const byRow=new Map();
+  for(const e of events){
+    const ex=byRow.get(e.row);
+    if(!ex||e.strength>ex.strength) byRow.set(e.row,e);
+  }
+  let evs=[...byRow.values()].sort((a,b)=>a.row-b.row);
+
+  // If onset detection gave us too little (sparse/quiet song or fallback),
+  // synthesize a beat grid so the chart isn't empty.
+  if(evs.length < totalBeats*0.3){
+    const have=new Set(evs.map(e=>e.row));
+    for(let beat=0;beat<totalBeats;beat++){
+      const row=beat*RPB;
+      if(!have.has(row)) evs.push({row,strength:0.5,bass:beat%4===0?0.6:0.2,centroid:0,gap:beatDur});
+    }
+    evs.sort((a,b)=>a.row-b.row);
+  }
+
+  // ── Difficulty: how much of the music to keep ──
+  const keepFrac = Math.min(1, 0.18 + diffFactor*0.92);
+  const strengths=evs.map(e=>e.strength).sort((a,b)=>a-b);
+  const cutIdx=Math.floor((1-keepFrac)*strengths.length);
+  const strengthCut=strengths[Math.min(strengths.length-1,Math.max(0,cutIdx))]||0;
+
+  // Snap an onset to the COARSEST grid line it's close to. A note that lands on
+  // the beat becomes a quarter note (row%4==0); only genuinely off-beat notes
+  // become 8ths or 16ths. This is what makes the beat read as quarter notes
+  // instead of everything looking like 16ths. Returns the snapped row.
+  const minSub = block<3?RPB : block<5?2 : 1; // coarsest allowed: quarter/8th/16th
+  function snapRow(row){
+    // When "snap to melody" is OFF, keep the raw onset row (still clamped to the
+    // 16th grid since that's our resolution) so notes sit exactly on the onsets.
+    if(!onsetSnap) return Math.round(row); // raw 16th-grid position
+    // Otherwise snap to the COARSEST grid line this difficulty allows, so a note
+    // on the beat reads as a quarter rather than a 16th.
+    for(const grid of [RPB,2,1]){
+      if(grid<minSub) break;
+      const snapped=Math.round(row/grid)*grid;
+      if(Math.abs(snapped-row)<=grid*0.34) return snapped;
+    }
+    return Math.round(row/minSub)*minSub;
+  }
+
+  // jump-density slider
+  const jumpDensity=+(document.getElementById('jumpDensity')?.value ?? 3);
+  const jumpsEnabled=jumpDensity>0;
+  const bassVals=evs.map(e=>e.bass).filter(v=>v>0).sort((a,b)=>a-b);
+  const PCTL=[1.01,0.82,0.68,0.55,0.42][jumpDensity];
+  const jumpBassThresh=bassVals.length?(bassVals[Math.min(bassVals.length-1,Math.floor(bassVals.length*PCTL))]??Infinity):Infinity;
+  const jumpStrengthGate=[1,0.55,0.45,0.38,0.30][jumpDensity];
+  const jumpCooldown=[99,RPB*3,RPB*2,RPB*1.5,RPB][jumpDensity]; // higher density = shorter cooldown
+
+  // hold-density slider — controls how readily sustained notes become holds.
+  // Higher density loosens the required gap and allows holds off the downbeat.
+  const holdDensity=+(document.getElementById('holdDensity')?.value ?? 3);
+  const holdsEnabled=holdDensity>0;
+  const holdGapGate=[99, RPB*2, RPB*1.5, RPB*1.0, RPB*0.75][holdDensity]; // gap (rows) before a note becomes a hold
+  const holdNeedsDownbeat=[true,true,true,false,false][holdDensity]; // looser at high density
+
+  // contour
+  const cents=evs.map(e=>e.centroid);
+  let deltaSum=0,deltaN=0;
+  for(let i=1;i<cents.length;i++){if(cents[i]&&cents[i-1]){deltaSum+=Math.abs(cents[i]-cents[i-1]);deltaN++;}}
+  const typicalDelta=(deltaN?deltaSum/deltaN:1)||1;
+  function contourAt(i){
+    if(i<=0||!evs[i].centroid||!evs[i-1].centroid) return 0;
+    const d=evs[i].centroid-evs[i-1].centroid;
+    return Math.max(-1,Math.min(1, d/(typicalDelta*1.5)));
+  }
+
+  // ── Build the kept-note list (rows that survive difficulty) ──
+  const kept=[]; // {row, e, i}
+  let lastRow=-99;
+  for(let i=0;i<evs.length;i++){
+    const e=evs[i];
+    if(e.strength<strengthCut) continue;
+    let row=snapRow(e.row);
+    if(row<0||row>=totalRows) continue;
+    // Enforce minimum spacing. If too close to the previous note, DROP this one
+    // (don't shift it — shifting causes row collisions that break alternation).
+    if(lastRow>=0 && row-lastRow<minSub){ continue; }
+    if(row===lastRow) continue;
+    kept.push({row,e,i});
+    lastRow=row;
+  }
+
+  // ── STREAM / PATTERN LINKING ──
+  // Stamina ON: bridge gaps aggressively into long continuous streams.
+  // Stamina OFF: link only notes that are ALREADY tightly spaced (a real
+  // melodic run) into short patterns, and leave natural gaps between phrases.
+  // This gives melody-following sets of patterns rather than 162 scattered
+  // single notes OR one endless stream.
+  if(block>=5){
+    const maxBridge = staminaMode ? 8 : 2;  // ON bridges up to a half-beat; OFF only 8th gaps
+    // A gap should only be bridged into a 16th stream if it sits in a genuinely
+    // DENSE region (the music is streaming there). In sparse/slow sections we
+    // leave the notes as quarters/8ths so those parts breathe rhythmically
+    // instead of everything becoming a 16th wall. Density = how many notes fall
+    // within a 2-beat window around the gap.
+    function localDensity(k){
+      const center=kept[k].row;
+      let cnt=0;
+      for(let j=Math.max(0,k-6);j<Math.min(kept.length,k+6);j++){
+        if(Math.abs(kept[j].row-center)<=RPB*2) cnt++;
+      }
+      return cnt; // notes within ~2 beats
+    }
+    // ── Stream resolution: 8th vs 16th ──
+    // For STAMINA streams the resolution is driven primarily by BPM, so the
+    // note rate stays playable: 16th notes at 150 BPM already = 10 notes/sec.
+    // Convention: stream 16ths up to ~150 BPM, then drop to 8ths above that so a
+    // fast song doesn't become an impossible 16th wall. (16ths at 130 BPM ≈ 8.7
+    // notes/sec is hard but doable; at 180 it would be 12/sec — unreasonable.)
+    // The bridge below uses staminaStep when stamina mode is on.
+    const staminaStep = bpm>165 ? 2 : 1;   // >165 BPM → 8th streams, else 16th
+    const linked=[];
+    for(let k=0;k<kept.length;k++){
+      linked.push(kept[k]);
+      if(k+1<kept.length){
+        const gap=kept[k+1].row-kept[k].row;
+        const dens=localDensity(k);
+        let step=0;
+        if(staminaMode){
+          // Stamina: bridge into a CONTINUOUS stream at the BPM-appropriate
+          // resolution — but only where the section is GENUINELY driving, not
+          // merely present. A higher density bar (≥6, was ≥4) keeps mild beats
+          // from being inflated into streams; those fall through to medium
+          // (8ths/quarters) below.
+          if(dens>=6) step=staminaStep;
+          else if(dens>=4) step=2; // groove-level: 8th steps, not a stream
+        } else {
+          // Non-stamina: resolution follows local density (16ths only where the
+          // music is genuinely busy), eased a little at higher difficulty.
+          const dens16 = block>=9 ? 6 : block>=7 ? 7 : 9;
+          if(dens>=dens16) step=1;
+          else if(dens>=4) step=2;
+        }
+        if(step && gap>=step && gap<=maxBridge){
+          for(let r=kept[k].row+step;r<kept[k+1].row;r+=step){
+            if((kept[k+1].row-r)>=1)
+              linked.push({row:r, e:{strength:0.4,bass:0,centroid:kept[k].e.centroid,gap:rowDur}, i:kept[k].i, filler:true});
+          }
+        }
+      }
+    }
+    let merged=[];
+    const seen=new Set();
+    for(const n of linked.sort((a,b)=>a.row-b.row)){ if(!seen.has(n.row)){seen.add(n.row);merged.push(n);} }
+
+    // ── RHYTHMIC PHRASING (stamina OFF) ──
+    // Some runs should phrase into short bursts — two or three notes, then a
+    // pause — following the music's natural breathing (e.g. triple-pause-
+    // triple-pause). The feet still alternate cleanly through each burst, so a
+    // 3-note burst lands on a natural L-R-L (or R-L-R) pattern. This is:
+    //   • rare overall — only some runs phrase, the rest stream normally
+    //   • MORE common on lower difficulties (easier charts breathe more)
+    //   • song-dependent — driven by where contiguous runs actually occur
+    // phraseChance: high on low blocks, low on high blocks.
+    if(!staminaMode){
+      // blk1≈0.42 down to blk12≈0.06 — lower difficulty phrases more often, but
+      // not so much that runs collapse to single notes.
+      const phraseChance = Math.max(0.05, 0.45 - diffFactor*0.42);
+      const out=[];
+      let burst=0, burstTarget=2+Math.floor(Math.random()*2);
+      let phrasingThisRun=false;
+      for(let k=0;k<merged.length;k++){
+        const n=merged[k];
+        const prev=out.length?out[out.length-1]:null;
+        // A run = notes spaced an 8th or 16th apart. A dropped note creates a
+        // gap bigger than that, which reads as the pause. Keep the contiguous
+        // threshold at the run's own spacing (≤2 rows) so pauses are real.
+        const contiguous = prev && (n.row-prev.row)<=2;
+        if(!contiguous){
+          // start of a new run — decide whether THIS run gets phrased at all
+          phrasingThisRun = Math.random() < phraseChance;
+          out.push(n); burst=1; burstTarget=2+Math.floor(Math.random()*2);
+          continue;
+        }
+        burst++;
+        if(phrasingThisRun && burst>burstTarget){
+          // we've placed a full burst — insert a pause by SKIPPING this note,
+          // unless it's a strong real onset (keep musically important hits).
+          const strong = !n.filler && n.e.strength>0.7;
+          if(!strong){
+            burst=0; burstTarget=2+Math.floor(Math.random()*2);
+            continue;
+          }
+        }
+        out.push(n);
+      }
+      merged=out;
+    }
+
+    // maxRun / minBreak: cap how long a continuous stream runs, then drop a
+    // break. Scales the user's beat values by difficulty (harder = longer runs
+    // allowed). Only applies in stamina mode (where long runs are the point).
+    if(staminaMode){
+      const maxRunRows=Math.max(RPB*4, Math.round(userMaxRun*(0.4+0.7*diffFactor))*RPB);
+      const breakRows=Math.max(2, Math.round(userMinBreak*(1.6-1.0*diffFactor))*RPB/RPB);
+      const out=[]; let runStart=null, runLen=0;
+      for(let k=0;k<merged.length;k++){
+        const n=merged[k];
+        const prev=out.length?out[out.length-1]:null;
+        const contiguous = prev && (n.row-prev.row)<=2;
+        if(contiguous){ runLen=n.row-runStart; }
+        else { runStart=n.row; runLen=0; }
+        // if this continuous run has exceeded the cap, drop notes to make a break
+        if(runLen>maxRunRows){
+          // skip notes until we've created a break of breakRows
+          const breakUntil=runStart+maxRunRows+breakRows;
+          if(n.row<breakUntil){ continue; }       // inside the forced break — drop
+          runStart=n.row; runLen=0;                 // resume after the break
+        }
+        out.push(n);
+      }
+      merged=out;
+    }
+    kept.length=0; kept.push(...merged);
+  }
+
+  // ── Place the notes ──
+  // forceBreaks: in quiet stretches (low surrounding strength), drop filler
+  // notes so the chart breathes instead of streaming through soft passages.
+  let quietThresh=0;
+  if(forceBreaks){
+    const allStr=kept.filter(n=>!n.filler).map(n=>n.e.strength).sort((a,b)=>a-b);
+    quietThresh=allStr.length?allStr[Math.floor(allStr.length*0.22)]:0; // bottom 22%
+  }
+  let placed=0, lastJumpRow=-99;
+  for(let k=0;k<kept.length;k++){
+    const {row,e,i}=kept[k];
+    if(notes[row]!==-1) continue;
+    // forceBreaks: skip filler (bridged) notes whose anchor is in a quiet part
+    if(forceBreaks && e.filler && e.centroid!==undefined){
+      // look at the nearest real note's strength via the bracketing kept entries
+      const anchor=kept[i]?kept[i].e:null;
+      if(anchor && anchor.strength<quietThresh) continue;
+    }
+    const cb=contourAt(i);
+    const isDownbeat=(row%RPB===0);
+    const nextGap=(k+1<kept.length?kept[k+1].row-row:RPB*2);
+    const prevGap=(k>0?row-kept[k-1].row:RPB*2);
+    // jump cooldown scales with density: higher density = jumps can be closer.
+    const jumpReady=(row-lastJumpRow)>=jumpCooldown;
+
+    // JUMP: a strong bass hit on a beat. It does NOT need to be isolated — real
+    // charts place jumps inside streams and on strong downbeats. The cooldown
+    // (jumpReady) is what keeps them from clustering; isolation is not required.
+    if(jumpsEnabled && block>=3 && !e.filler && e.bass>=jumpBassThresh && e.strength>jumpStrengthGate && isDownbeat && jumpReady){
+      placeJump(row); lastJumpRow=row;
+    }
+    else if(holdsEnabled && !e.filler && nextGap>=holdGapGate && (!holdNeedsDownbeat || isDownbeat)){
+      const holdLen=Math.min(nextGap-1, RPB*4);
+      if(holdLen>=Math.max(2,RPB*0.75)) placeHold(row,holdLen,cb);
+      else placeStep(row,cb);
+    }
+    else{
+      placeStep(row,cb);
+    }
+    placed++;
+  }
+
+  return {notes,rpb:RPB,jumpRows};
+}
+
+// ── SM serialization ──────────────────────────────────────────────
+function notesToSM(notes,jumpRows){
+  const rpm=16,measures=[],jr=jumpRows||{};
+  for(let i=0;i<notes.length;i+=rpm){
+    const m=[];for(let k=0;k<rpm;k++)m.push({n:notes[i+k]!==undefined?notes[i+k]:-1,row:i+k});
+    measures.push(m);
+  }
+  return measures.map(m=>m.map(cell=>{
+    const n=cell.n,r=['0','0','0','0'];
+    if(n>=0&&n<=3)r[n]='1';
+    if(n>=10&&n<=13)r[n-10]='2';
+    if(n>=20&&n<=23)r[n-20]='3';
+    // overlay jump's second arrow if this row is a jump — but never clobber a
+    // hold head/tail already on that panel (only write onto empty panels).
+    const j=jr[cell.row];
+    if(j){if(r[j[0]]==='0')r[j[0]]='1';if(r[j[1]]==='0')r[j[1]]='1';}
+    return r.join('');
+  }).join('\n')).join('\n,\n');
+}
+
+function buildSM(title,artist,bpm,offset,charts,ext,safe){
+  const diffNames=['Beginner','Easy','Medium','Hard','Challenge'];
+  const base=5-charts.length;
+  // StepMania #OFFSET is the audio-time of beat 0 (the first beat of the grid).
+  // For a song that starts on/near a beat this is a small POSITIVE value — the
+  // reference chart "A Long Fall" uses #OFFSET:0.009000 (just the ITG 9ms bias).
+  // The intro before the first charted note is encoded as empty measures in the
+  // note data, NOT in the offset. We anchor notes to the same phase, so the
+  // offset is simply: detected beat phase + 9ms bias + user fine-tune.
+  const hdr=`#TITLE:${title};\n#SUBTITLE:;\n#ARTIST:${artist};\n#TITLETRANSLIT:;\n#SUBTITLETRANSLIT:;\n#ARTISTTRANSLIT:;\n#GENRE:;\n#CREDIT:ITG StepGen;\n#BANNER:${safe}-banner.png;\n#BACKGROUND:${safe}-bg.png;\n#CDTITLE:;\n#MUSIC:${safe}.${ext};\n#OFFSET:${offset.toFixed(6)};\n#SAMPLESTART:12.000;\n#SAMPLELENGTH:13.000;\n#SELECTABLE:YES;\n#BPMS:0.000=${bpm.toFixed(3)};\n#STOPS:;\n\n`;
+  const cblocks=charts.map((c,i)=>{const name=diffNames[Math.min(base+i,4)];return`#NOTES:\n     dance-single:\n     ITG StepGen:\n     ${name}:\n     ${c.block}:\n     0.000,0.000,0.000,0.000,0.000:\n${notesToSM(c.notes,c.jumpRows)}\n;`;}).join('\n\n');
+  return hdr+cblocks;
+}
+
+// ── Diff badges ───────────────────────────────────────────────────
+function getDiffs(){
+  const mn=+document.getElementById('diffMin').value,mx=+document.getElementById('diffMax').value,n=+document.getElementById('diffCount').value;
+  if(n===1)return[mx];if(n===2)return[Math.round((mn+mx)/2),mx];return[mn,Math.round((mn+mx)/2),mx];
+}
+function updateDiffBadges(){
+  const diffs=getDiffs(),names=['Easy','Medium','Hard'],cls=['easy','med','hard'];
+  document.getElementById('diffBadges').innerHTML=diffs.map((d,i)=>`<div class="db ${cls[i]||'hard'}">${names[i]} · Blk ${d}</div>`).join('');
+}
+updateDiffBadges();
+
+// ── Canvases ──────────────────────────────────────────────────────
+function canvasW(cv){return Math.max(cv.offsetWidth||0,cv.parentElement?.offsetWidth||0,600);}
+
+function drawWaveform(){
+  const cv=document.getElementById('waveCanvas'),cx=cv.getContext('2d');
+  cv.width=canvasW(cv);cv.height=80;const W=cv.width,H=80;
+  cx.fillStyle='#12121a';cx.fillRect(0,0,W,H);
+  const d=audioBuffer.getChannelData(0),step=Math.floor(d.length/W);
+  cx.strokeStyle='#00f0ff44';cx.lineWidth=1;cx.beginPath();
+  for(let x=0;x<W;x++){let mn=1,mx=-1;for(let j=0;j<step;j++){const v=d[x*step+j]||0;if(v<mn)mn=v;if(v>mx)mx=v;}cx.moveTo(x,(1-mx)/2*H);cx.lineTo(x,(1-mn)/2*H);}cx.stroke();
+  if(energyCurve.length){cx.strokeStyle='#ff3cac88';cx.lineWidth=2;cx.beginPath();energyCurve.forEach((v,i)=>{const x=i/energyCurve.length*W,y=H-v*H*.8;i?cx.lineTo(x,y):cx.moveTo(x,y);});cx.stroke();}
+}
+
+function drawEnergy(){
+  const cv=document.getElementById('energyCanvas'),cx=cv.getContext('2d');
+  cv.width=canvasW(cv);cv.height=50;const W=cv.width,H=50;
+  cx.fillStyle='#12121a';cx.fillRect(0,0,W,H);
+  if(!energyCurve.length)return;
+  const sm=energyCurve.map((_,i,a)=>{let s=0,c=0;for(let j=Math.max(0,i-8);j<Math.min(a.length,i+8);j++){s+=a[j];c++;}return s/c;});
+  const g=cx.createLinearGradient(0,0,0,H);g.addColorStop(0,'#7b2fff88');g.addColorStop(1,'#7b2fff00');
+  cx.beginPath();cx.moveTo(0,H);sm.forEach((v,i)=>cx.lineTo(i/sm.length*W,H-v*H*.85));cx.lineTo(W,H);cx.closePath();cx.fillStyle=g;cx.fill();
+  cx.beginPath();cx.strokeStyle='#7b2fff';cx.lineWidth=2;sm.forEach((v,i)=>{const x=i/sm.length*W,y=H-v*H*.85;i?cx.lineTo(x,y):cx.moveTo(x,y);});cx.stroke();
+  cx.fillStyle='#5a5a7a';cx.font='9px Inter';cx.fillText('ENERGY',5,11);
+}
+
+// ── MANUAL TIMELINE (Stage 1: measures + playback + playhead) ──────
+// regions: array of {startMeas, endMeas, type:'s16'|'s8'} painted by the user.
+let manualRegions=[];
+let manualPlayMode='s16';
+let manualAudioCtx=null, manualSource=null, manualPlaying=false;
+let manualPlayStartCtxTime=0, manualPlayStartOffset=0, manualRAF=null;
+let manualTotalMeasures=0, manualMeasDur=1;
+
+function manualMeasureCount(){
+  if(!audioBuffer) return 0;
+  const beatDur=60/detectedBPM, measDur=beatDur*4;
+  manualMeasDur=measDur;
+  return Math.max(1, Math.ceil(audioBuffer.duration/measDur));
+}
+
+function showManualTimeline(){
+  if(!audioBuffer) return;
+  manualTotalMeasures=manualMeasureCount();
+  document.getElementById('manualSection').style.display='flex';
+  drawManualTimeline(0);
+}
+
+function drawManualTimeline(playheadSec){
+  const cv=document.getElementById('manualCanvas');
+  if(!cv) return;
+  cv.width=canvasW(cv); cv.height=64;
+  const W=cv.width, H=64, cx=cv.getContext('2d');
+  cx.fillStyle='#12121a'; cx.fillRect(0,0,W,H);
+  if(!audioBuffer){return;}
+  const dur=audioBuffer.duration;
+  // measure gridlines + numbers (label every Nth measure to avoid clutter)
+  const M=manualTotalMeasures, pxPerMeas=W/M;
+  const labelEvery=Math.max(1,Math.ceil(40/pxPerMeas));
+  // faint energy underlay so the user can see where the song gets intense
+  if(energyCurve.length){
+    cx.strokeStyle='#7b2fff55'; cx.lineWidth=1; cx.beginPath();
+    energyCurve.forEach((v,i)=>{const x=i/energyCurve.length*W,y=H-v*H*0.7;i?cx.lineTo(x,y):cx.moveTo(x,y);});
+    cx.stroke();
+  }
+  // painted regions
+  manualRegions.forEach(r=>{
+    const x0=r.startMeas*pxPerMeas, x1=r.endMeas*pxPerMeas;
+    cx.fillStyle = r.type==='s16' ? '#ff3cac55' : '#00f0ff44';
+    cx.fillRect(x0,0,x1-x0,H);
+    cx.strokeStyle = r.type==='s16' ? '#ff3cac' : '#00f0ff';
+    cx.lineWidth=1; cx.strokeRect(x0+0.5,0.5,x1-x0-1,H-1);
+    if(x1-x0>26){cx.fillStyle='#fff';cx.font='bold 9px Inter';cx.textAlign='center';cx.textBaseline='top';
+      cx.fillText(r.type==='s16'?'16th':'8th',(x0+x1)/2,3);}
+  });
+  // measure gridlines
+  cx.strokeStyle='#ffffff14'; cx.fillStyle='#5a5a7a'; cx.font='8px Inter'; cx.textAlign='center'; cx.textBaseline='bottom';
+  for(let m=0;m<=M;m++){
+    const x=m*pxPerMeas;
+    cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();
+    if(m<M && m%labelEvery===0){cx.fillText(m+1,x+pxPerMeas/2,H-1);}
+  }
+  // playhead
+  if(playheadSec!=null && playheadSec>=0){
+    const px=playheadSec/dur*W;
+    cx.strokeStyle='#fff'; cx.lineWidth=2; cx.beginPath();cx.moveTo(px,0);cx.lineTo(px,H);cx.stroke();
+  }
+  updateManualReadout();
+}
+
+function updateManualReadout(){
+  const el=document.getElementById('manualReadout'); if(!el)return;
+  if(!manualRegions.length){el.textContent='No regions painted — whole song will follow melody onsets with pattern rules.';return;}
+  const s16=manualRegions.filter(r=>r.type==='s16').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
+  const s8=manualRegions.filter(r=>r.type==='s8').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
+  el.textContent=`16th: ${s16.toFixed(0)} measures · 8th: ${s8.toFixed(0)} measures · rest: melody-follow`;
+}
+
+// ---- Playback ----
+function manualEnsureCtx(){
+  if(!manualAudioCtx) manualAudioCtx=new(window.AudioContext||window.webkitAudioContext)();
+  return manualAudioCtx;
+}
+function manualPlay(){
+  if(!audioBuffer||manualPlaying) return;
+  const ctx=manualEnsureCtx();
+  if(ctx.state==='suspended') ctx.resume();
+  manualSource=ctx.createBufferSource();
+  manualSource.buffer=audioBuffer;
+  manualSource.connect(ctx.destination);
+  manualPlayStartCtxTime=ctx.currentTime;
+  manualSource.start(0, manualPlayStartOffset);
+  manualPlaying=true;
+  document.getElementById('manualPlayBtn').textContent='❚❚ Pause';
+  const loop=()=>{
+    if(!manualPlaying) return;
+    const elapsed=ctx.currentTime-manualPlayStartCtxTime+manualPlayStartOffset;
+    if(elapsed>=audioBuffer.duration){ manualStop(); return; }
+    drawManualTimeline(elapsed);
+    manualRAF=requestAnimationFrame(loop);
+  };
+  loop();
+}
+function manualPause(){
+  if(!manualPlaying) return;
+  const ctx=manualAudioCtx;
+  const elapsed=ctx.currentTime-manualPlayStartCtxTime+manualPlayStartOffset;
+  manualPlayStartOffset=Math.min(elapsed,audioBuffer.duration);
+  try{manualSource.stop();}catch(e){}
+  manualPlaying=false;
+  if(manualRAF)cancelAnimationFrame(manualRAF);
+  document.getElementById('manualPlayBtn').textContent='▶ Play';
+  drawManualTimeline(manualPlayStartOffset);
+}
+function manualStop(){
+  if(manualSource){try{manualSource.stop();}catch(e){}}
+  manualPlaying=false; manualPlayStartOffset=0;
+  if(manualRAF)cancelAnimationFrame(manualRAF);
+  document.getElementById('manualPlayBtn').textContent='▶ Play';
+  drawManualTimeline(0);
+}
+
+function drawStructure(duration){
+  const cv=document.getElementById('structureCanvas');
+  document.getElementById('structureSection').style.display='flex';
+  cv.width=canvasW(cv);cv.height=28;const W=cv.width,H=28;
+  const cx=cv.getContext('2d');cx.fillStyle='#12121a';cx.fillRect(0,0,W,H);
+  if(!songStructure.length)return;
+  songStructure.forEach(seg=>{
+    const x0=seg.start/duration*W,x1=seg.end/duration*W;
+    cx.fillStyle=seg.color+'88';cx.fillRect(x0,2,x1-x0-1,H-4);
+    cx.strokeStyle=seg.color;cx.lineWidth=1;cx.strokeRect(x0,2,x1-x0-1,H-4);
+    if(x1-x0>20){cx.fillStyle='#fff';cx.font='bold 10px Orbitron,monospace';cx.textAlign='center';cx.textBaseline='middle';cx.fillText(seg.label,(x0+x1)/2,H/2);}
+  });
+  const legend=document.getElementById('structureLegend');legend.innerHTML='';
+  const seen=new Set();
+  songStructure.forEach(seg=>{if(seen.has(seg.label))return;seen.add(seg.label);const el=document.createElement('div');el.style.cssText='display:flex;align-items:center;gap:4px';el.innerHTML=`<span style="width:12px;height:12px;background:${seg.color}88;border:1px solid ${seg.color};border-radius:2px;display:inline-block"></span>${seg.label}`;legend.appendChild(el);});
+}
+
+function drawDensityChart(charts,duration,bpm){
+  document.getElementById('densitySection').style.display='flex';
+  const cv=document.getElementById('densityCanvas'),cx=cv.getContext('2d');
+  cv.width=canvasW(cv);cv.height=90;const W=cv.width,H=cv.height;
+  cx.fillStyle='#12121a';cx.fillRect(0,0,W,H);
+  if(!charts.length)return;
+  const beatDur=60/bpm,measDur=beatDur*4,rpm=16,WINDOW=3;
+  const maxNPS=bpm/60*4;
+  const colors=['#00ff88','#ffb800','#ff3cac'];
+  const names=['Easy','Medium','Hard'];
+  const legend=document.getElementById('densityLegend');legend.innerHTML='';
+  const totalRows=charts[0].notes.length,totalMeasures=Math.ceil(totalRows/rpm);
+  const series=charts.map((ch,ci)=>{
+    const jr=ch.jumpRows||{};
+    // Count notes per measure: taps (0-3), hold-heads (10-13), and the extra
+    // arrow from any jump on that row. This is the true playable density.
+    const meas=[];
+    for(let m=0;m<totalMeasures;m++){
+      const s=m*rpm,e=s+rpm;let cnt=0;
+      for(let r=s;r<e&&r<ch.notes.length;r++){
+        const n=ch.notes[r];
+        if((n>=0&&n<=3)||(n>=10&&n<=13))cnt++; // tap or hold head
+        if(jr[r])cnt++;                          // jump adds a second arrow
+      }
+      meas.push(cnt/measDur);
+    }
+    const sm=meas.map((_,i,a)=>{let s=0,c=0;for(let j=Math.max(0,i-WINDOW);j<=Math.min(a.length-1,i+WINDOW);j++){s+=a[j];c++;}return s/c;});
+    // True longest run = longest unbroken chain of consecutive 16th-note rows.
+    // A row "has a note" if it holds a tap or hold-head (>=0). A continuous
+    // stream is a span where every 16th row is filled with no empty gap.
+    const has=r=>{const n=ch.notes[r];return n>=0&&!(n>=20&&n<=23);}; // taps + hold heads, not tail
+    let bestLen=0,bestStart=0,curLen=0,curStart=0;
+    for(let r=0;r<ch.notes.length;r++){
+      if(has(r)){if(curLen===0)curStart=r;curLen++;if(curLen>bestLen){bestLen=curLen;bestStart=curStart;}}
+      else curLen=0;
+    }
+    const runNotes=bestLen;
+    const runStartMeas=bestStart/rpm;
+    const runMeasSpan=bestLen/rpm;
+    // Peak NPS = the actual densest measure this chart contains (raw, not
+    // smoothed). This reflects each chart's real maximum, so an 8th-note chart
+    // and a 16th-note chart report different peaks.
+    const peakNPS=Math.max(...meas,0);
+    return{sm,meas,block:ch.block,color:colors[ci],runNotes,runStartMeas,runMeasSpan,peakNPS};
+  });
+  const gMax=Math.max(maxNPS,...series.flatMap(s=>s.sm),1);
+  // Max NPS reference line
+  const maxY=H-(maxNPS/gMax)*(H-12)-4;
+  cx.strokeStyle='#ffffff22';cx.lineWidth=1;cx.setLineDash([4,4]);cx.beginPath();cx.moveTo(0,maxY);cx.lineTo(W,maxY);cx.stroke();cx.setLineDash([]);
+  cx.fillStyle='#ffffff44';cx.font='8px Inter';cx.textAlign='left';cx.textBaseline='top';cx.fillText(`Max ${maxNPS.toFixed(1)} NPS (${bpm.toFixed(0)} BPM 16ths)`,4,maxY+2);
+  series.forEach((s,si)=>{
+    cx.beginPath();cx.strokeStyle=s.color;cx.lineWidth=si===series.length-1?2:1.5;
+    s.sm.forEach((v,i)=>{const x=i/totalMeasures*W,y=H-(v/gMax)*(H-12)-4;i===0?cx.moveTo(x,y):cx.lineTo(x,y);});cx.stroke();
+    // Longest run annotation on hardest chart
+    if(si===series.length-1&&s.runNotes>=rpm){
+      const x0=s.runStartMeas/totalMeasures*W,x1=(s.runStartMeas+s.runMeasSpan)/totalMeasures*W;
+      cx.fillStyle=s.color+'22';cx.fillRect(x0,2,x1-x0,H-4);
+      cx.strokeStyle=s.color;cx.lineWidth=1;cx.setLineDash([2,2]);cx.strokeRect(x0,2,x1-x0,H-4);cx.setLineDash([]);
+      if(x1-x0>30){cx.fillStyle=s.color;cx.font='bold 8px Inter';cx.textAlign='center';cx.textBaseline='bottom';cx.fillText(s.runNotes+'-note run',(x0+x1)/2,H-4);}
+    }
+    const el=document.createElement('div');el.style.cssText='display:flex;align-items:center;gap:4px';
+    const runTxt=s.runNotes>=rpm?`longest run ${s.runNotes} notes (${s.runMeasSpan.toFixed(1)}m)`:'no sustained stream';
+    el.innerHTML=`<span style="display:inline-block;width:16px;height:3px;background:${s.color};border-radius:2px"></span>${names[si]||'Chart'} Blk${s.block} (peak ${s.peakNPS.toFixed(1)} NPS, ${runTxt})`;
+    legend.appendChild(el);
+  });
+  cx.fillStyle='#5a5a7a';cx.font='9px Inter';cx.textAlign='left';cx.textBaseline='top';cx.fillText('NPS',4,4);
+}
+
+// ── Image generation ──────────────────────────────────────────────
+function loadImg(src){return new Promise(res=>{const i=new Image();i.onload=()=>res(i);i.onerror=()=>res(null);i.src=src;});}
+function loadImgOrNull(src){return src?loadImg(src):Promise.resolve(null);}
+async function makeImg(title,artist,w,h,artImg){
+  const cv=document.createElement('canvas');cv.width=w;cv.height=h;const cx=cv.getContext('2d');
+  if(artImg){cx.drawImage(artImg,0,0,w,h);}
+  else{const g=cx.createLinearGradient(0,0,w,h);g.addColorStop(0,'#0a0014');g.addColorStop(1,'#000e1a');cx.fillStyle=g;cx.fillRect(0,0,w,h);cx.globalAlpha=.05;cx.fillStyle='#fff';cx.font=`${Math.min(w,h)*.55}px sans-serif`;cx.textAlign='center';cx.textBaseline='middle';cx.fillText('▼',w/2,h/2);cx.globalAlpha=1;}
+  const og=cx.createLinearGradient(0,h*.45,0,h);og.addColorStop(0,'rgba(0,0,0,0)');og.addColorStop(1,'rgba(0,0,0,.85)');cx.fillStyle=og;cx.fillRect(0,0,w,h);
+  const tfs=w===418?Math.min(20,w/(title.length+2)*1.4):Math.min(36,w/(title.length+2)*1.6);
+  cx.shadowColor='#000';cx.shadowBlur=10;cx.fillStyle='#fff';cx.font=`bold ${tfs}px sans-serif`;cx.textAlign='center';cx.textBaseline='alphabetic';
+  cx.fillText(title,w/2,h-(w===418?20:55));cx.font=`${tfs*.62}px sans-serif`;cx.fillStyle='#aaaaee';cx.fillText(artist,w/2,h-(w===418?4:28));
+  return new Promise(res=>cv.toBlob(res,'image/png'));
+}
+
+// ── PREVIEW button ────────────────────────────────────────────────
+// ── Manual timeline event wiring ──
+(function wireManual(){
+  const playBtn=document.getElementById('manualPlayBtn');
+  const stopBtn=document.getElementById('manualStopBtn');
+  if(playBtn) playBtn.addEventListener('click',()=>{ manualPlaying?manualPause():manualPlay(); });
+  if(stopBtn) stopBtn.addEventListener('click',()=>manualStop());
+  // paint-mode buttons
+  document.querySelectorAll('.paint-mode').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('.paint-mode').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on'); manualPlayMode=b.dataset.mode;
+    });
+  });
+  // click-drag painting on the canvas
+  const cv=document.getElementById('manualCanvas');
+  if(cv){
+    let dragging=false, dragStartMeas=0;
+    const measAtX=(clientX)=>{
+      const rect=cv.getBoundingClientRect();
+      const x=Math.max(0,Math.min(rect.width,clientX-rect.left));
+      return Math.max(0,Math.min(manualTotalMeasures, Math.round(x/rect.width*manualTotalMeasures)));
+    };
+    const seekAtX=(clientX)=>{
+      const rect=cv.getBoundingClientRect();
+      const x=Math.max(0,Math.min(rect.width,clientX-rect.left));
+      return x/rect.width*(audioBuffer?audioBuffer.duration:0);
+    };
+    cv.addEventListener('pointerdown',e=>{
+      if(!audioBuffer)return;
+      // shift-click (or middle) seeks playback instead of painting
+      if(e.shiftKey){ manualPlayStartOffset=seekAtX(e.clientX); if(manualPlaying){manualPause();manualPlay();} else drawManualTimeline(manualPlayStartOffset); return; }
+      dragging=true; dragStartMeas=measAtX(e.clientX); cv.setPointerCapture(e.pointerId);
+    });
+    cv.addEventListener('pointermove',e=>{
+      if(!dragging)return;
+      const cur=measAtX(e.clientX);
+      const a=Math.min(dragStartMeas,cur), b=Math.max(dragStartMeas,cur);
+      drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
+      // preview the selection box
+      const cx=cv.getContext('2d'), W=cv.width, pm=W/manualTotalMeasures;
+      cx.fillStyle='#ffffff22'; cx.fillRect(a*pm,0,(b-a)*pm,cv.height);
+    });
+    cv.addEventListener('pointerup',e=>{
+      if(!dragging)return; dragging=false;
+      const cur=measAtX(e.clientX);
+      let a=Math.min(dragStartMeas,cur), b=Math.max(dragStartMeas,cur);
+      if(b<=a){ b=a+1; } // a single click paints one measure
+      applyManualPaint(a,b,manualPlayMode);
+    });
+  }
+})();
+function applyManualPaint(a,b,mode){
+  // remove any overlap in [a,b], then add the new region (unless erasing)
+  const next=[];
+  manualRegions.forEach(r=>{
+    if(r.endMeas<=a || r.startMeas>=b){ next.push(r); return; } // no overlap
+    if(r.startMeas<a) next.push({startMeas:r.startMeas,endMeas:a,type:r.type});
+    if(r.endMeas>b)  next.push({startMeas:b,endMeas:r.endMeas,type:r.type});
+  });
+  if(mode!=='erase') next.push({startMeas:a,endMeas:b,type:mode});
+  next.sort((x,y)=>x.startMeas-y.startMeas);
+  manualRegions=next;
+  drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
+}
+
+document.getElementById('genBtn').addEventListener('click',async()=>{
+  if(!audioBuffer){log('No audio loaded!','err');return;}
+  const btn=document.getElementById('genBtn');btn.disabled=true;btn.textContent='⏳ Generating...';
+  try{
+    const title=document.getElementById('songTitle').value||'Unknown';
+    const artist=document.getElementById('songArtist').value||'Unknown Artist';
+    const bpm=detectedBPM,diffs=getDiffs();
+    const ext=audioFileObj?audioFileObj.name.split('.').pop():'mp3';
+    const safe=title.replace(/[^a-zA-Z0-9_\- ]/g,'_');
+    log(`Generating ${diffs.length} chart(s): blocks ${diffs.join(', ')}`);
+    const charts=[];
+    for(const block of diffs){
+      log('Building block '+block+'...');await tick();
+      const {notes,rpb}=generateChart(block,bpm,energyCurve,audioBuffer.duration);
+      await tick();
+      const nc=notes.filter(n=>n>=0&&n<=3).length;
+      log('  Block '+block+': '+nc+' notes','ok');
+      charts.push({block,notes,rpb});
+    }
+    drawDensityChart(charts,audioBuffer.duration,bpm);
+    const useAutoOff=document.getElementById('ruleAutoOffset').checked;
+    const userFine=+document.getElementById('offset').value;
+    const use9ms=document.getElementById('rule9ms').checked;
+    const offset=(useAutoOff?detectedOffset:0)+userFine+(use9ms?0.009:0);
+    lastGeneratedData={title,artist,bpm,offset,charts,ext,safe};
+    document.getElementById('dlBtn').style.display='block';
+    log('Preview ready — review density chart then click Download','ok');
+  }catch(err){log('Error: '+err.message,'err');console.error(err);}
+  btn.disabled=false;btn.textContent='⚡ PREVIEW CHART';
+});
+
+// ── DOWNLOAD button ───────────────────────────────────────────────
+document.getElementById('dlBtn').addEventListener('click',async()=>{
+  if(!lastGeneratedData){log('Generate first!','err');return;}
+  const btn=document.getElementById('dlBtn');btn.disabled=true;btn.textContent='⏳ Packing...';
+  try{
+    const{title,artist,bpm,offset,charts,ext,safe}=lastGeneratedData;
+    log('Writing .sm...');await tick();
+    const smText=buildSM(title,artist,bpm,offset,charts,ext,safe);
+    log('Generating artwork...');await tick();
+    // Each art type uses its own uploaded image if provided, else the
+    // auto-extracted embedded art, else a generated placeholder.
+    const bannerImg = await loadImgOrNull(userArtBanner||embeddedArt);
+    const bgImg     = await loadImgOrNull(userArtBg||embeddedArt);
+    const jacketImg = await loadImgOrNull(userArtJacket||embeddedArt);
+    const bannerBlob=await makeImg(title,artist,418,164,bannerImg);
+    const bgBlob=await makeImg(title,artist,640,480,bgImg);
+    const jacketBlob=await makeImg(title,artist,512,512,jacketImg);
+    log('Packing ZIP...');await tick();
+    const zip=new JSZip();const folder=zip.folder(safe);
+    folder.file(`${safe}.sm`,smText);
+    folder.file(`${safe}-banner.png`,bannerBlob);
+    folder.file(`${safe}-bg.png`,bgBlob);
+    folder.file(`${safe}-jacket.png`,jacketBlob);
+    if(audioFileObj)folder.file(`${safe}.${ext}`,audioFileObj);
+    const zipBlob=await zip.generateAsync({type:'blob',compression:'STORE'});
+    const url=URL.createObjectURL(zipBlob);
+    const a=document.createElement('a');a.href=url;a.download=`${safe}.zip`;a.click();
+    URL.revokeObjectURL(url);
+    log(`✓ Downloaded "${safe}.zip"','ok`);
+  }catch(err){log('Error: '+err.message,'err');console.error(err);}
+  btn.disabled=false;btn.textContent='⬇ DOWNLOAD ZIP';
+});
+</script>
+</body>
+</html>
