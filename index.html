@@ -1666,41 +1666,82 @@ function drawDensityChart(charts,duration,bpm){
       meas.push(cnt/measDur);
     }
     const sm=meas.map((_,i,a)=>{let s=0,c=0;for(let j=Math.max(0,i-WINDOW);j<=Math.min(a.length-1,i+WINDOW);j++){s+=a[j];c++;}return s/c;});
-    // True longest run = longest unbroken chain of consecutive 16th-note rows.
-    // A row "has a note" if it holds a tap or hold-head (>=0). A continuous
-    // stream is a span where every 16th row is filled with no empty gap.
-    const has=r=>{const n=ch.notes[r];return n>=0&&!(n>=20&&n<=23);}; // taps + hold heads, not tail
-    let bestLen=0,bestStart=0,curLen=0,curStart=0;
-    for(let r=0;r<ch.notes.length;r++){
-      if(has(r)){if(curLen===0)curStart=r;curLen++;if(curLen>bestLen){bestLen=curLen;bestStart=curStart;}}
-      else curLen=0;
+    // Longest STREAM, the ITG way: the longest run of consecutive MEASURES that
+    // are at (near-)full 16th density. A measure counts as "stream" if it has at
+    // least 15 of 16 rows filled (allows the odd jump/melody gap without breaking
+    // the run, which the old row-by-row counter wrongly did — a single gap reset
+    // the whole count, and 8th regions never counted at all).
+    const STREAM_MIN=15; // notes in a measure to count as a 16th-stream measure
+    const measFilled=[];
+    for(let m=0;m<totalMeasures;m++){
+      const s=m*rpm,e=Math.min(s+rpm,ch.notes.length);
+      let c=0; for(let r=s;r<e;r++){const n=ch.notes[r]; if(n>=0&&!(n>=20&&n<=23))c++;}
+      measFilled.push(c);
     }
-    const runNotes=bestLen;
-    const runStartMeas=bestStart/rpm;
-    const runMeasSpan=bestLen/rpm;
+    let bestMeas=0,bestStartM=0,curMeas=0,curStartM=0;
+    for(let m=0;m<measFilled.length;m++){
+      if(measFilled[m]>=STREAM_MIN){ if(curMeas===0)curStartM=m; curMeas++; if(curMeas>bestMeas){bestMeas=curMeas;bestStartM=curStartM;} }
+      else curMeas=0;
+    }
+    const runMeasSpan=bestMeas;            // longest stream length in MEASURES
+    const runStartMeas=bestStartM;
+    const runNotes=bestMeas*rpm;           // approx notes (for reference only)
     // Peak NPS = the actual densest measure this chart contains (raw, not
-    // smoothed). This reflects each chart's real maximum, so an 8th-note chart
-    // and a 16th-note chart report different peaks.
+    // smoothed). This reflects each chart's real maximum.
     const peakNPS=Math.max(...meas,0);
     return{sm,meas,block:ch.block,color:colors[ci],runNotes,runStartMeas,runMeasSpan,peakNPS};
   });
-  const gMax=Math.max(maxNPS,...series.flatMap(s=>s.sm),1);
+  const gMax=Math.max(maxNPS,...series.flatMap(s=>s.meas),1);
   // Max NPS reference line
   const maxY=H-(maxNPS/gMax)*(H-12)-4;
   cx.strokeStyle='#ffffff22';cx.lineWidth=1;cx.setLineDash([4,4]);cx.beginPath();cx.moveTo(0,maxY);cx.lineTo(W,maxY);cx.stroke();cx.setLineDash([]);
   cx.fillStyle='#ffffff44';cx.font='8px Inter';cx.textAlign='left';cx.textBaseline='top';cx.fillText(`Max ${maxNPS.toFixed(1)} NPS (${bpm.toFixed(0)} BPM 16ths)`,4,maxY+2);
   series.forEach((s,si)=>{
-    cx.beginPath();cx.strokeStyle=s.color;cx.lineWidth=si===series.length-1?2:1.5;
-    s.sm.forEach((v,i)=>{const x=i/totalMeasures*W,y=H-(v/gMax)*(H-12)-4;i===0?cx.moveTo(x,y):cx.lineTo(x,y);});cx.stroke();
-    // Longest run annotation on hardest chart
-    if(si===series.length-1&&s.runNotes>=rpm){
+    const isTop=si===series.length-1;
+    // ITG-style stepped/blocky density: each MEASURE is a flat block at its raw
+    // density, with abrupt vertical jumps between measures (no smoothing, no
+    // diagonal slopes). The hardest chart is filled; others drawn as stepped
+    // outlines so all three remain readable.
+    const vals=s.meas; // RAW per-measure values (not smoothed)
+    const yOf=v=>H-(v/gMax)*(H-12)-4;
+    const xOf=i=>i/totalMeasures*W;
+    if(isTop){
+      // filled blocky area
+      cx.beginPath();
+      cx.moveTo(0,H);
+      for(let i=0;i<vals.length;i++){
+        const x0=xOf(i), x1=xOf(i+1), y=yOf(vals[i]);
+        cx.lineTo(x0,y); cx.lineTo(x1,y);   // flat top across the measure
+      }
+      cx.lineTo(W,H); cx.closePath();
+      cx.fillStyle=s.color+'cc'; cx.fill();
+      cx.strokeStyle=s.color; cx.lineWidth=1.5;
+      // stroke just the stepped top edge
+      cx.beginPath();
+      for(let i=0;i<vals.length;i++){
+        const x0=xOf(i), x1=xOf(i+1), y=yOf(vals[i]);
+        if(i===0)cx.moveTo(x0,y);else cx.lineTo(x0,y);
+        cx.lineTo(x1,y);
+      }
+      cx.stroke();
+    } else {
+      // stepped outline for the other difficulties
+      cx.beginPath(); cx.strokeStyle=s.color; cx.lineWidth=1.5;
+      for(let i=0;i<vals.length;i++){
+        const x0=xOf(i), x1=xOf(i+1), y=yOf(vals[i]);
+        if(i===0)cx.moveTo(x0,y);else cx.lineTo(x0,y);
+        cx.lineTo(x1,y);
+      }
+      cx.stroke();
+    }
+    // Longest stream annotation on hardest chart (now in MEASURES)
+    if(isTop&&s.runMeasSpan>=1){
       const x0=s.runStartMeas/totalMeasures*W,x1=(s.runStartMeas+s.runMeasSpan)/totalMeasures*W;
-      cx.fillStyle=s.color+'22';cx.fillRect(x0,2,x1-x0,H-4);
-      cx.strokeStyle=s.color;cx.lineWidth=1;cx.setLineDash([2,2]);cx.strokeRect(x0,2,x1-x0,H-4);cx.setLineDash([]);
-      if(x1-x0>30){cx.fillStyle=s.color;cx.font='bold 8px Inter';cx.textAlign='center';cx.textBaseline='bottom';cx.fillText(s.runNotes+'-note run',(x0+x1)/2,H-4);}
+      cx.strokeStyle='#fff';cx.lineWidth=1;cx.setLineDash([2,2]);cx.strokeRect(x0,2,x1-x0,H-4);cx.setLineDash([]);
+      if(x1-x0>30){cx.fillStyle='#fff';cx.font='bold 8px Inter';cx.textAlign='center';cx.textBaseline='bottom';cx.fillText(s.runMeasSpan+'m stream',(x0+x1)/2,H-4);}
     }
     const el=document.createElement('div');el.style.cssText='display:flex;align-items:center;gap:4px';
-    const runTxt=s.runNotes>=rpm?`longest run ${s.runNotes} notes (${s.runMeasSpan.toFixed(1)}m)`:'no sustained stream';
+    const runTxt=s.runMeasSpan>=1?`longest stream ${s.runMeasSpan} measures`:'no sustained stream';
     el.innerHTML=`<span style="display:inline-block;width:16px;height:3px;background:${s.color};border-radius:2px"></span>${names[si]||'Chart'} Blk${s.block} (peak ${s.peakNPS.toFixed(1)} NPS, ${runTxt})`;
     legend.appendChild(el);
   });
