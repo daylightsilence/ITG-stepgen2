@@ -145,6 +145,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
       <div class="tog-row"><label>ITG 9ms sync bias</label><label class="toggle"><input type="checkbox" id="rule9ms" checked/><span class="sl"></span></label></div>
       <div class="tog-row"><label>Auto-detect beat offset</label><label class="toggle"><input type="checkbox" id="ruleAutoOffset" checked/><span class="sl"></span></label></div>
       <div class="tog-row"><label>Snap steps to melody grid</label><label class="toggle"><input type="checkbox" id="onsetSnap" checked/><span class="sl"></span></label></div>
+      <div class="tog-row"><label>Follow melody closely <span style="color:var(--muted);font-size:9px">(quiet parts)</span></label><label class="toggle"><input type="checkbox" id="melodyClose"/><span class="sl"></span></label></div>
       <div class="tog-row"><label>Force breaks in quiet sections</label><label class="toggle"><input type="checkbox" id="forceBreaks" checked/><span class="sl"></span></label></div>
       <div class="rules-group">Intensity &amp; Stamina</div>
       <div class="tog-row"><label>Stamina mode (long continuous streams)</label><label class="toggle"><input type="checkbox" id="staminaMode" checked/><span class="sl"></span></label></div>
@@ -213,6 +214,10 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
     </div>
     <div class="log-box" id="log"><span style="color:var(--muted)">Waiting for audio...</span><br/></div>
     <button class="gen-btn" id="genBtn" disabled>⚡ PREVIEW CHART</button>
+    <div id="exportPicker" style="display:none;margin:6px 0;font-size:11px">
+      <div style="color:var(--muted);margin-bottom:4px">Export which difficulties?</div>
+      <div id="exportPickerList" style="display:flex;gap:10px;flex-wrap:wrap"></div>
+    </div>
     <button class="dl-btn" id="dlBtn">⬇ DOWNLOAD ZIP</button>
   </div>
 </div>
@@ -1086,6 +1091,23 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   const cutIdx=Math.floor((1-keepFrac)*strengths.length);
   const strengthCut=strengths[Math.min(strengths.length-1,Math.max(0,cutIdx))]||0;
 
+  // ── MELODY IN QUIET SECTIONS ──
+  // Outside streams / in quiet sections (low bass = no strong beat masking the
+  // melody), we can rely more on the melody onsets themselves. The "Follow
+  // melody closely" toggle controls how many of them we keep there:
+  //   ON  → close follow: keep most melodic onsets (lenient cut)
+  //   OFF → sparse: only the stronger melodic hits (near the normal cut)
+  // A "quiet" onset is one whose bass energy is well below the song's median —
+  // i.e. the melody, not a kick. In painted-manual mode the unpainted regions
+  // are quiet by the user's own declaration; in auto mode we detect it by bass.
+  const melodyClose = document.getElementById('melodyClose')?.checked ?? false;
+  const bassesQ=evs.map(e=>e.bass).filter(v=>v>0).sort((a,b)=>a-b);
+  const bassMedianQ = bassesQ.length? bassesQ[Math.floor(bassesQ.length*0.5)] : 0;
+  // lenient cut for quiet-zone melody: keep more (lower bar) when close-follow on
+  const meloCutIdx=Math.floor((1-Math.min(1, keepFrac + (melodyClose?0.45:0.12)))*strengths.length);
+  const melodyCut=strengths[Math.min(strengths.length-1,Math.max(0,meloCutIdx))]||0;
+  const isQuietOnset=(e)=> e.bass < bassMedianQ*0.7;  // melody, not a strong beat
+
   // Snap an onset to the COARSEST grid line it's close to. A note that lands on
   // the beat becomes a quarter note (row%4==0); only genuinely off-beat notes
   // become 8ths or 16ths. This is what makes the beat read as quarter notes
@@ -1137,7 +1159,11 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   let lastRow=-99;
   for(let i=0;i<evs.length;i++){
     const e=evs[i];
-    if(e.strength<strengthCut) continue;
+    // Quiet melodic onsets get the lenient melody cut; everything else the
+    // normal difficulty cut. This catches melody in quiet sections (more when
+    // "Follow melody closely" is on) without thickening the loud/beat parts.
+    const cut = isQuietOnset(e) ? melodyCut : strengthCut;
+    if(e.strength<cut) continue;
     let row=snapRow(e.row);
     if(row<0||row>=totalRows) continue;
     // Enforce minimum spacing. If too close to the previous note, DROP this one
@@ -1821,19 +1847,46 @@ document.getElementById('genBtn').addEventListener('click',async()=>{
     const offset=(useAutoOff?detectedOffset:0)+userFine+(use9ms?0.009:0);
     lastGeneratedData={title,artist,bpm,offset,charts,ext,safe};
     document.getElementById('dlBtn').style.display='block';
+    populateExportPicker(charts);
     log('Preview ready — review density chart then click Download','ok');
   }catch(err){log('Error: '+err.message,'err');console.error(err);}
   btn.disabled=false;btn.textContent='⚡ PREVIEW CHART';
 });
 
 // ── DOWNLOAD button ───────────────────────────────────────────────
+function populateExportPicker(charts){
+  const wrap=document.getElementById('exportPicker');
+  const list=document.getElementById('exportPickerList');
+  if(!wrap||!list)return;
+  list.innerHTML='';
+  // difficulty slot names, same logic as buildSM
+  const diffNames=['Beginner','Easy','Medium','Hard','Challenge'];
+  const base=5-charts.length;
+  charts.forEach((c,i)=>{
+    const name=diffNames[Math.min(base+i,4)];
+    const lbl=document.createElement('label');
+    lbl.style.cssText='display:flex;align-items:center;gap:4px;cursor:pointer;color:var(--accent)';
+    lbl.innerHTML=`<input type="checkbox" class="export-diff" data-idx="${i}" checked/> ${name} (${c.block})`;
+    list.appendChild(lbl);
+  });
+  wrap.style.display = charts.length>1 ? 'block' : 'none'; // only show picker if >1
+}
+
 document.getElementById('dlBtn').addEventListener('click',async()=>{
   if(!lastGeneratedData){log('Generate first!','err');return;}
   const btn=document.getElementById('dlBtn');btn.disabled=true;btn.textContent='⏳ Packing...';
   try{
     const{title,artist,bpm,offset,charts,ext,safe}=lastGeneratedData;
+    // Export only the difficulties the user checked (if the picker is shown).
+    let exportCharts=charts;
+    const boxes=[...document.querySelectorAll('.export-diff')];
+    if(boxes.length){
+      const checkedIdx=new Set(boxes.filter(b=>b.checked).map(b=>+b.dataset.idx));
+      exportCharts=charts.filter((c,i)=>checkedIdx.has(i));
+    }
+    if(!exportCharts.length){log('Select at least one difficulty to export','err');btn.disabled=false;btn.textContent='⬇ DOWNLOAD ZIP';return;}
     log('Writing .sm...');await tick();
-    const smText=buildSM(title,artist,bpm,offset,charts,ext,safe);
+    const smText=buildSM(title,artist,bpm,offset,exportCharts,ext,safe);
     log('Generating artwork...');await tick();
     // Each art type uses its own uploaded image if provided, else the
     // auto-extracted embedded art, else a generated placeholder.
