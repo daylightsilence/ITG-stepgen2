@@ -700,6 +700,11 @@ function fitTempo(){
   }
   const T=idx.map(i=>onsetTimes[i]);
   const S=idx.map(i=>(onsetStrengths&&onsetStrengths[i])||1);
+  // Bass energy per onset — used to anchor the OFFSET (phase) to the kick/down-
+  // beat specifically, which is what a player feels, rather than the average of
+  // all onsets. BPM detection still uses strength (S); only the final phase uses
+  // this kick weighting.
+  const B=idx.map(i=>(onsetBass&&onsetBass[i]!=null)?onsetBass[i]:0);
   const span=T[T.length-1]-T[0]||1;
 
   // Weighted alignment score for a given period & phase.
@@ -725,6 +730,23 @@ function fitTempo(){
       if(s>bestS){bestS=s;bestP=phase;}
     }
     return {phase:bestP,score:bestS};
+  }
+  // Kick-anchored alignment: same gaussian snap, but weight each onset by its
+  // BASS energy so the phase locks onto the kick/downbeat the player feels.
+  // Used ONLY for the final offset, after BPM is fixed. Falls back to strength
+  // where there's no bass (so a song with no clear kick still gets a phase).
+  function alignKick(period, phase){
+    let score=0, wsum=0;
+    const sigma=period*0.06;
+    for(let i=0;i<T.length;i++){
+      const w = B[i]>0.15 ? B[i]*B[i] : B[i]*0.05; // emphasize real kicks
+      if(w<=0) continue;
+      const ph=((T[i]-phase)%period+period)%period;
+      const dist=Math.min(ph, period-ph);
+      score+=w*Math.exp(-(dist*dist)/(2*sigma*sigma));
+      wsum+=w;
+    }
+    return wsum?score/wsum:0;
   }
 
   // Coarse BPM sweep across the playable range (60–220), 0.5 BPM steps.
@@ -763,18 +785,37 @@ function fitTempo(){
     const {phase,score}=bestPhase(period);
     if(score>refScore){refScore=score;refBpm=bpm;refPhase=phase;}
   }
-  // Fine offset polish at ~1ms resolution around refPhase.
+  // ── KICK-ANCHORED OFFSET ──
+  // BPM and a rough phase are now locked (via strength-based alignment, which is
+  // good at finding the pulse). But the OFFSET a player feels is the kick/down-
+  // beat, which may sit at a different sub-beat position than the onset-average
+  // phase. So re-find the phase using bass-weighted alignment, scanning the FULL
+  // beat (not just near refPhase) so it can lock onto the kick wherever it is.
   const period=60/refBpm;
-  let polishPhase=refPhase,polishScore=refScore;
-  for(let off=refPhase-period*0.1;off<=refPhase+period*0.1;off+=0.001){
-    const s=align(period,off);
+  let polishPhase=refPhase,polishScore=alignKick(period,refPhase);
+  // coarse full-beat scan for the kick
+  const KSTEPS=128;
+  for(let k=0;k<KSTEPS;k++){
+    const off=k*period/KSTEPS;
+    const s=alignKick(period,off);
     if(s>polishScore){polishScore=s;polishPhase=off;}
   }
-  // Normalize phase into [0, period) and convert to a "first beat" offset
-  // (time of the first beat). AV's #OFFSET is this value, written negative.
+  // fine ~1ms polish around the best kick phase
+  for(let off=polishPhase-period*0.05;off<=polishPhase+period*0.05;off+=0.001){
+    const s=alignKick(period,off);
+    if(s>polishScore){polishScore=s;polishPhase=off;}
+  }
+  // If there's essentially no bass in the song (no kick to anchor to), fall back
+  // to the strength-based phase so we don't lock onto noise.
+  const bassTotal=B.reduce((a,b)=>a+b,0);
+  if(bassTotal < 0.5){
+    polishPhase=refPhase;
+    for(let off=refPhase-period*0.1;off<=refPhase+period*0.1;off+=0.001){
+      const s=align(period,off);
+      if(s>polishScore){polishScore=s;polishPhase=off;}
+    }
+  }
   let phase=((polishPhase%period)+period)%period;
-  // The offset we want is the time gap from audio start to the first beat,
-  // which is simply the phase (first grid line at or after t=0).
   detectedOffset=phase;
 
   // Round BPM nicely if very close to an integer.
