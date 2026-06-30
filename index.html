@@ -72,6 +72,8 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
 .toggle-all{background:var(--bg);border:1px solid var(--accent3);color:var(--accent);font-family:'Inter',sans-serif;font-size:9px;padding:2px 8px;border-radius:3px;cursor:pointer;text-transform:none;letter-spacing:0;}
 .paint-mode{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:10px;padding:3px 10px;border-radius:3px;cursor:pointer;}
 .paint-mode.on{border-color:var(--accent);color:var(--accent);background:#00f0ff11;}
+.diff-sel{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:10px;padding:3px 10px;border-radius:3px;cursor:pointer;}
+.diff-sel.on{border-color:var(--accent2);color:var(--accent2);background:#ff3cac11;}
 #manualCanvas{cursor:crosshair;}
 .toggle-all:hover{background:rgba(123,47,255,.15);}
 ::-webkit-scrollbar{width:4px;}::-webkit-scrollbar-track{background:var(--bg);}::-webkit-scrollbar-thumb{background:var(--border);border-radius:4px;}
@@ -175,12 +177,25 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
       <div id="structureLegend" style="display:flex;gap:8px;flex-wrap:wrap;margin-top:3px;font-size:10px;color:var(--muted)"></div>
     </div>
     <div class="wave-sec" id="manualSection" style="display:none">
-      <div class="wave-label" style="display:flex;justify-content:space-between;align-items:center">
-        <span>Manual Timeline — paint stream regions by measure</span>
+      <div class="wave-label" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px">
+        <span style="display:flex;align-items:center;gap:8px">
+          <label style="display:flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:11px;color:var(--accent)">
+            <input type="checkbox" id="manualToggle"/> Manual mode
+          </label>
+          <span style="color:var(--muted);font-size:10px">Paint stream regions by measure</span>
+        </span>
         <span style="display:flex;gap:6px;align-items:center">
           <button id="manualPlayBtn" class="toggle-all" style="min-width:54px">▶ Play</button>
           <button id="manualStopBtn" class="toggle-all">■ Stop</button>
+          <span id="manualMeasNow" style="font-size:11px;color:var(--accent);font-family:'Orbitron',monospace;min-width:64px;text-align:right">m —</span>
         </span>
+      </div>
+      <div id="manualDiffRow" style="display:flex;gap:6px;margin:4px 0;font-size:10px;align-items:center;flex-wrap:wrap">
+        <span style="color:var(--muted)">Editing:</span>
+        <button class="diff-sel" data-diff="0">Easy</button>
+        <button class="diff-sel" data-diff="1">Medium</button>
+        <button class="diff-sel on" data-diff="2">Hard</button>
+        <span id="manualInheritNote" style="color:var(--muted)"></span>
       </div>
       <div id="manualPaintModes" style="display:flex;gap:6px;margin:4px 0;font-size:10px;flex-wrap:wrap">
         <button class="paint-mode on" data-mode="s16">16th stream</button>
@@ -188,7 +203,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
         <button class="paint-mode" data-mode="erase">Erase</button>
         <span id="manualHint" style="color:var(--muted);align-self:center">Click-drag across measures to paint. Unpainted = melody-follow.</span>
       </div>
-      <canvas id="manualCanvas" height="64"></canvas>
+      <canvas id="manualCanvas" height="90"></canvas>
       <div id="manualReadout" style="font-size:10px;color:var(--muted);margin-top:3px"></div>
     </div>
     <div class="wave-sec" id="densitySection">
@@ -850,8 +865,29 @@ function detectSongStructure(bpm,duration){
 //   4. Holds on sustained tones, jumps on strong isolated bass hits.
 //   5. Streams, breaks, and density all emerge from what the music does —
 //      so a busy chorus streams and a sparse verse breathes, automatically.
-function generateChart(block,bpm,energy,duration){
+function generateChart(block,bpm,energy,duration,manualRegions){
   const diffFactor=(block-1)/11;
+  // Manual mode: if painted regions are supplied, they OVERRIDE auto stream
+  // detection — painted 16th regions become solid continuous 16th streams,
+  // painted 8th regions solid 8th streams, and unpainted measures fall back to
+  // the normal onset-following. Arrow selection (foot alternation, patterns,
+  // crossover gating, drills) is unchanged — same engine as auto.
+  const manualOn = Array.isArray(manualRegions) && manualRegions.length>0;
+  const RPM=16; // rows per measure (16th resolution)
+  // Build a per-row resolution map from the regions: 1=16th, 2=8th, 0=none.
+  const manualRowRes = manualOn ? (()=>{
+    const map=new Int8Array( Math.ceil(duration/(60/bpm*4))*RPM + RPM ).fill(0);
+    for(const r of manualRegions){
+      const startRow=Math.round(r.startMeas*RPM), endRow=Math.round(r.endMeas*RPM);
+      const step = r.type==='s16' ? 1 : 2;
+      for(let row=startRow; row<endRow && row<map.length; row++){
+        // mark rows that are ON this resolution's grid as forced-fill
+        if(step===1) map[row]=1;
+        else if(row%2===0) map[row]=2; // 8th grid: even rows only
+      }
+    }
+    return map;
+  })() : null;
   const staminaMode=document.getElementById('staminaMode')?.checked ?? true;
   const onsetSnap=document.getElementById('onsetSnap')?.checked ?? true;     // snap notes to grid vs raw onset rows
   const forceBreaks=document.getElementById('forceBreaks')?.checked ?? true; // insert breaks in quiet sections
@@ -1246,6 +1282,39 @@ function generateChart(block,bpm,energy,duration){
     kept.length=0; kept.push(...merged);
   }
 
+  // ── MANUAL OVERRIDE ──
+  // In painted regions, replace whatever the auto-detector produced with a SOLID
+  // stream at the painted resolution. Outside painted regions, keep the auto
+  // rows. The forced rows still flow through placeStep below, so foot
+  // alternation, patterns, crossover gating and drills all apply as normal.
+  if(manualOn){
+    const isManualRow=(row)=> row>=0 && row<manualRowRes.length && manualRowRes[row]!==0;
+    const anyManualInRange=(rowA,rowB)=>{ for(let r=rowA;r<rowB;r++) if(isManualRow(r)) return true; return false; };
+    // keep auto rows that are NOT inside any painted region
+    const outside = kept.filter(n=>{
+      // is this row within a painted region's measure span?
+      const inPainted = manualRegions.some(reg=> n.row>=reg.startMeas*RPM && n.row<reg.endMeas*RPM);
+      return !inPainted;
+    });
+    // build solid forced rows for painted regions
+    const forced=[];
+    for(const reg of manualRegions){
+      const step = reg.type==='s16' ? 1 : 2;
+      const startRow=Math.round(reg.startMeas*RPM), endRow=Math.round(reg.endMeas*RPM);
+      for(let row=startRow; row<endRow && row<totalRows; row+=step){
+        // carry a synthetic event; arrow/contour still chosen by placeStep
+        const nearest = kept.reduce((best,n)=> Math.abs(n.row-row)<Math.abs((best?best.row:1e9)-row)?n:best, null);
+        const cent = nearest? nearest.e.centroid : 2000;
+        forced.push({row, e:{strength:0.7,bass:0.2,centroid:cent,gap:rowDur}, i:0, filler:false, manual:true});
+      }
+    }
+    const combined=[...outside,...forced].sort((a,b)=>a.row-b.row);
+    // de-dupe rows (forced wins)
+    const seen=new Set(); const dedup=[];
+    for(const n of combined){ if(!seen.has(n.row)){ seen.add(n.row); dedup.push(n);} }
+    kept.length=0; kept.push(...dedup);
+  }
+
   // ── Place the notes ──
   // forceBreaks: in quiet stretches (low surrounding strength), drop filler
   // notes so the chart breathes instead of streaming through soft passages.
@@ -1361,9 +1430,31 @@ function drawEnergy(){
   cx.fillStyle='#5a5a7a';cx.font='9px Inter';cx.fillText('ENERGY',5,11);
 }
 
-// ── MANUAL TIMELINE (Stage 1: measures + playback + playhead) ──────
-// regions: array of {startMeas, endMeas, type:'s16'|'s8'} painted by the user.
-let manualRegions=[];
+// ── MANUAL TIMELINE (Stage 1-3) ──────
+// Per-difficulty painted regions. Index 0/1/2 = Easy/Medium/Hard slots.
+// manualTouched[i] = has the user actually painted that difficulty (vs inherited)?
+let manualRegionsByDiff=[[],[],[]];
+let manualTouched=[false,false,false];
+let manualActiveDiff=2;        // which difficulty is being painted (default Hard)
+let manualEnabled=false;       // the explicit manual-mode toggle
+// convenience accessor for the currently-edited difficulty's regions
+function manualRegionsCur(){ return manualRegionsByDiff[manualActiveDiff]; }
+// Resolve the regions to USE for a given difficulty: its own if touched, else
+// inherit from the nearest touched difficulty (auto-copy).
+function manualRegionsFor(diffIdx){
+  if(manualTouched[diffIdx]) return manualRegionsByDiff[diffIdx];
+  // inherit: prefer Hard's, then Medium's, then Easy's — whichever was painted
+  for(const i of [2,1,0]){ if(manualTouched[i]) return manualRegionsByDiff[i]; }
+  return [];
+}
+// Map a difficulty loop index (easy→hard order) to its regions, with auto-copy.
+function manualRegionsForSlot(loopIdx, diffCount){
+  let slot;
+  if(diffCount>=3) slot=loopIdx;            // 0,1,2 → Easy,Med,Hard
+  else if(diffCount===2) slot=loopIdx+1;    // 0,1 → Med,Hard
+  else slot=2;                              // single → Hard
+  return manualRegionsFor(slot);
+}
 let manualPlayMode='s16';
 let manualAudioCtx=null, manualSource=null, manualPlaying=false;
 let manualPlayStartCtxTime=0, manualPlayStartOffset=0, manualRAF=null;
@@ -1386,8 +1477,8 @@ function showManualTimeline(){
 function drawManualTimeline(playheadSec){
   const cv=document.getElementById('manualCanvas');
   if(!cv) return;
-  cv.width=canvasW(cv); cv.height=64;
-  const W=cv.width, H=64, cx=cv.getContext('2d');
+  cv.width=canvasW(cv); cv.height=90;
+  const W=cv.width, H=90, cx=cv.getContext('2d');
   cx.fillStyle='#12121a'; cx.fillRect(0,0,W,H);
   if(!audioBuffer){return;}
   const dur=audioBuffer.duration;
@@ -1401,7 +1492,7 @@ function drawManualTimeline(playheadSec){
     cx.stroke();
   }
   // painted regions
-  manualRegions.forEach(r=>{
+  manualRegionsCur().forEach(r=>{
     const x0=r.startMeas*pxPerMeas, x1=r.endMeas*pxPerMeas;
     cx.fillStyle = r.type==='s16' ? '#ff3cac55' : '#00f0ff44';
     cx.fillRect(x0,0,x1-x0,H);
@@ -1417,19 +1508,32 @@ function drawManualTimeline(playheadSec){
     cx.beginPath();cx.moveTo(x,0);cx.lineTo(x,H);cx.stroke();
     if(m<M && m%labelEvery===0){cx.fillText(m+1,x+pxPerMeas/2,H-1);}
   }
-  // playhead
+  // playhead + live measure counter
   if(playheadSec!=null && playheadSec>=0){
     const px=playheadSec/dur*W;
     cx.strokeStyle='#fff'; cx.lineWidth=2; cx.beginPath();cx.moveTo(px,0);cx.lineTo(px,H);cx.stroke();
+    const measNow=Math.floor(playheadSec/manualMeasDur)+1;
+    const mEl=document.getElementById('manualMeasNow');
+    if(mEl) mEl.textContent='m '+measNow;
   }
   updateManualReadout();
 }
 
 function updateManualReadout(){
+  const note=document.getElementById('manualInheritNote');
+  if(note){
+    const names=['Easy','Medium','Hard'];
+    if(!manualTouched[manualActiveDiff]){
+      // which would it inherit from?
+      let from=null; for(const i of [2,1,0]){ if(manualTouched[i]){from=names[i];break;} }
+      note.textContent = from ? `(inheriting ${from}'s regions — paint to customize)` : '(unpainted)';
+    } else note.textContent='(custom)';
+  }
   const el=document.getElementById('manualReadout'); if(!el)return;
-  if(!manualRegions.length){el.textContent='No regions painted — whole song will follow melody onsets with pattern rules.';return;}
-  const s16=manualRegions.filter(r=>r.type==='s16').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
-  const s8=manualRegions.filter(r=>r.type==='s8').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
+  const cur=manualRegionsCur();
+  if(!cur.length){el.textContent='No regions painted for this difficulty — will inherit or follow melody onsets.';return;}
+  const s16=cur.filter(r=>r.type==='s16').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
+  const s8=cur.filter(r=>r.type==='s8').reduce((a,r)=>a+(r.endMeas-r.startMeas),0);
   el.textContent=`16th: ${s16.toFixed(0)} measures · 8th: ${s8.toFixed(0)} measures · rest: melody-follow`;
 }
 
@@ -1590,6 +1694,17 @@ async function makeImg(title,artist,w,h,artImg){
       b.classList.add('on'); manualPlayMode=b.dataset.mode;
     });
   });
+  // manual-mode toggle
+  const mt=document.getElementById('manualToggle');
+  if(mt) mt.addEventListener('change',()=>{ manualEnabled=mt.checked; updateManualReadout(); });
+  // difficulty selector (which difficulty's regions you're editing)
+  document.querySelectorAll('.diff-sel').forEach(b=>{
+    b.addEventListener('click',()=>{
+      document.querySelectorAll('.diff-sel').forEach(x=>x.classList.remove('on'));
+      b.classList.add('on'); manualActiveDiff=+b.dataset.diff;
+      drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
+    });
+  });
   // click-drag painting on the canvas
   const cv=document.getElementById('manualCanvas');
   if(cv){
@@ -1606,10 +1721,18 @@ async function makeImg(title,artist,w,h,artImg){
     };
     cv.addEventListener('pointerdown',e=>{
       if(!audioBuffer)return;
-      // shift-click (or middle) seeks playback instead of painting
-      if(e.shiftKey){ manualPlayStartOffset=seekAtX(e.clientX); if(manualPlaying){manualPause();manualPlay();} else drawManualTimeline(manualPlayStartOffset); return; }
+      // RIGHT-CLICK (or shift-click) seeks playback to that spot and plays from
+      // there — so you don't have to start from the beginning every time.
+      if(e.button===2 || e.shiftKey){
+        manualPlayStartOffset=seekAtX(e.clientX);
+        if(manualPlaying){ manualPause(); manualPlay(); }
+        else { manualPlay(); }   // start playing from the clicked spot
+        return;
+      }
       dragging=true; dragStartMeas=measAtX(e.clientX); cv.setPointerCapture(e.pointerId);
     });
+    // suppress the browser context menu so right-click-to-seek works cleanly
+    cv.addEventListener('contextmenu',e=>e.preventDefault());
     cv.addEventListener('pointermove',e=>{
       if(!dragging)return;
       const cur=measAtX(e.clientX);
@@ -1631,14 +1754,24 @@ async function makeImg(title,artist,w,h,artImg){
 function applyManualPaint(a,b,mode){
   // remove any overlap in [a,b], then add the new region (unless erasing)
   const next=[];
-  manualRegions.forEach(r=>{
+  manualRegionsCur().forEach(r=>{
     if(r.endMeas<=a || r.startMeas>=b){ next.push(r); return; } // no overlap
     if(r.startMeas<a) next.push({startMeas:r.startMeas,endMeas:a,type:r.type});
     if(r.endMeas>b)  next.push({startMeas:b,endMeas:r.endMeas,type:r.type});
   });
   if(mode!=='erase') next.push({startMeas:a,endMeas:b,type:mode});
   next.sort((x,y)=>x.startMeas-y.startMeas);
-  manualRegions=next;
+  // Merge touching/overlapping regions of the SAME type into one.
+  const merged=[];
+  for(const r of next){
+    const last=merged[merged.length-1];
+    if(last && last.type===r.type && r.startMeas<=last.endMeas){
+      last.endMeas=Math.max(last.endMeas,r.endMeas);
+    } else {
+      merged.push({...r});
+    }
+  }
+  manualRegionsByDiff[manualActiveDiff]=merged; manualTouched[manualActiveDiff]=true;
   drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
 }
 
@@ -1653,9 +1786,14 @@ document.getElementById('genBtn').addEventListener('click',async()=>{
     const safe=title.replace(/[^a-zA-Z0-9_\- ]/g,'_');
     log(`Generating ${diffs.length} chart(s): blocks ${diffs.join(', ')}`);
     const charts=[];
-    for(const block of diffs){
+    for(let di=0; di<diffs.length; di++){
+      const block=diffs[di];
       log('Building block '+block+'...');await tick();
-      const {notes,rpb}=generateChart(block,bpm,energyCurve,audioBuffer.duration);
+      // Manual mode: pass the painted regions for this difficulty slot (with
+      // auto-copy inheritance). diffs are ordered easy→hard, mapping to slots
+      // 0,1,2. If fewer than 3 difficulties, map by index.
+      const manualR = manualEnabled ? manualRegionsForSlot(di, diffs.length) : null;
+      const {notes,rpb}=generateChart(block,bpm,energyCurve,audioBuffer.duration, manualR);
       await tick();
       const nc=notes.filter(n=>n>=0&&n<=3).length;
       log('  Block '+block+': '+nc+' notes','ok');
