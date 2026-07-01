@@ -188,6 +188,9 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
         <span style="display:flex;gap:6px;align-items:center">
           <button id="manualPlayBtn" class="toggle-all" style="min-width:54px">▶ Play</button>
           <button id="manualStopBtn" class="toggle-all">■ Stop</button>
+          <button id="manualSaveBtn" class="toggle-all" title="Save painted regions to a file">⤓ Save</button>
+          <button id="manualLoadBtn" class="toggle-all" title="Load painted regions from a file">⤒ Load</button>
+          <input type="file" id="manualLoadInput" accept=".json" style="display:none"/>
           <span id="manualMeasNow" style="font-size:11px;color:var(--accent);font-family:'Orbitron',monospace;min-width:64px;text-align:right">m —</span>
         </span>
       </div>
@@ -815,7 +818,15 @@ function fitTempo(){
       if(s>polishScore){polishScore=s;polishPhase=off;}
     }
   }
+  // Wrap the phase to the NEAREST beat. A song with a built-in lead-in (e.g.
+  // ~0.4s ≈ a whole beat at 140 BPM) would otherwise land near a full beat and
+  // bake that lead-in into #OFFSET. Wrapping by a WHOLE beat is safe — the beat
+  // grid is periodic, so grid lines (and thus note positions) don't move; only
+  // the label of "beat 0" changes. The result is the small ±ms remainder real
+  // charts use (A Long Fall +9ms, JENOVA −1ms), with the lead-in handled by the
+  // empty rows before the first note rather than by the offset.
   let phase=((polishPhase%period)+period)%period;
+  if(phase>period/2) phase-=period;   // → [-period/2, +period/2], nearest beat
   detectedOffset=phase;
 
   // Round BPM nicely if very close to an integer.
@@ -1810,6 +1821,41 @@ async function makeImg(title,artist,w,h,artImg){
   const stopBtn=document.getElementById('manualStopBtn');
   if(playBtn) playBtn.addEventListener('click',()=>{ manualPlaying?manualPause():manualPlay(); });
   if(stopBtn) stopBtn.addEventListener('click',()=>manualStop());
+  // Save painted regions (all difficulties) to a JSON file
+  const saveBtn=document.getElementById('manualSaveBtn');
+  if(saveBtn) saveBtn.addEventListener('click',()=>{
+    const data={version:1, regionsByDiff:manualRegionsByDiff, touched:manualTouched,
+      song:(document.getElementById('songTitle')?.value||'chart')};
+    const blob=new Blob([JSON.stringify(data,null,1)],{type:'application/json'});
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=(data.song.replace(/[^a-z0-9]+/gi,'_')||'chart')+'_regions.json';
+    a.click(); URL.revokeObjectURL(a.href);
+  });
+  // Load painted regions from a JSON file
+  const loadBtn=document.getElementById('manualLoadBtn');
+  const loadInput=document.getElementById('manualLoadInput');
+  if(loadBtn&&loadInput){
+    loadBtn.addEventListener('click',()=>loadInput.click());
+    loadInput.addEventListener('change',e=>{
+      const f=e.target.files[0]; if(!f)return;
+      const rd=new FileReader();
+      rd.onload=()=>{
+        try{
+          const data=JSON.parse(rd.result);
+          if(data.regionsByDiff&&Array.isArray(data.regionsByDiff)){
+            manualRegionsByDiff=data.regionsByDiff;
+            manualTouched=data.touched||[false,false,false];
+            drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
+            updateManualReadout();
+            log('Loaded painted regions from '+f.name,'ok');
+          } else log('That file has no region data','err');
+        }catch(err){ log('Could not read regions file: '+err.message,'err'); }
+      };
+      rd.readAsText(f);
+      loadInput.value=''; // allow re-loading same file
+    });
+  }
   // paint-mode buttons
   document.querySelectorAll('.paint-mode').forEach(b=>{
     b.addEventListener('click',()=>{
