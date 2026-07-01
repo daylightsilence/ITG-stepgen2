@@ -631,7 +631,21 @@ function computeOnsets(){
       const thrScale = beatWeak ? 0.21 : 0.35;
       const thr=(sum/c)+sens*useMax*thrScale;
       if(v>thr&&v>=useFlux[i-1]&&v>useFlux[i+1]&&i-lastPk>=MGAP){
-        onsetTimes.push(specFrameTimes[i]);
+        // LEADING-EDGE REFINEMENT: the flux PEAKS a few frames after the sound's
+        // attack actually begins (a kick takes ~10-30ms to rise to full level).
+        // The felt beat — and where ITGmania/ArrowVortex sync — is the ATTACK
+        // START, not the peak. So walk backward from the peak to where the flux
+        // began rising out of the local floor, and timestamp the onset THERE.
+        // This removes a systematic "late by the attack rise-time" bias.
+        let edge=i;
+        const floor=(sum/c); // local mean flux = the pre-attack floor
+        // step back while flux is still descending toward the floor (i.e. we're
+        // on the rising slope) and above the floor
+        while(edge>1 && useFlux[edge-1] < useFlux[edge] && useFlux[edge-1] > floor){
+          edge--;
+        }
+        // edge now sits at the first frame of the rise; that's the attack start
+        onsetTimes.push(specFrameTimes[edge]);
         onsetStrengths.push(useMax?v/useMax:0);
         onsetBass.push(Math.min(1,(specFrames[i][0]+specFrames[i][1])*0.5));
         let num=0,den=0;
@@ -675,7 +689,11 @@ function computeOnsets(){
     for(let j=Math.max(0,i-PWIN);j<Math.min(nHops,i+PWIN);j++)sum+=flux[j];
     const thr=(sum/(PWIN*2))+sens*maxF*0.4;
     if(v>thr&&v>flux[i-1]&&v>flux[i+1]&&i-lastHop>=MGAP){
-      onsetTimes.push(times[i]);onsetStrengths.push(v/(maxF||1));
+      // leading-edge backtrack (see spectral path): mark the attack start, not
+      // the flux peak, so onset times aren't systematically late.
+      let edge=i; const floor=sum/(PWIN*2);
+      while(edge>1 && flux[edge-1] < flux[edge] && flux[edge-1] > floor){ edge--; }
+      onsetTimes.push(times[edge]);onsetStrengths.push(v/(maxF||1));
       onsetBass.push(maxBass?bassEnv[i]/maxBass:0);
       onsetCentroid.push(0); // no spectral info in fallback
       lastHop=i;
@@ -751,6 +769,35 @@ function fitTempo(){
     }
     return wsum?score/wsum:0;
   }
+  // COMB-FILTER phase alignment (Scheirer 1998, the method rhythm-game tools use
+  // and which benchmarks better than plain autocorrelation for phase). Instead
+  // of scoring onsets against a single grid line, it correlates them against a
+  // PULSE TRAIN: the beat, plus its metrical subdivisions (half, quarter beat)
+  // at decreasing weight. This reinforces the true beat and resists syncopation,
+  // where offbeat onsets otherwise pull a single-pulse aligner off-phase.
+  // Bass-weighted so it still anchors to the kick.
+  function alignComb(period, phase, useBass){
+    // metrical pulse train: beat (1.0), half-beat (0.5w), quarter-beat (0.25w)
+    const combs=[{div:1,w:1.0},{div:2,w:0.5},{div:4,w:0.25}];
+    let score=0, wsum=0;
+    const sigma=period*0.05;
+    for(let i=0;i<T.length;i++){
+      const w = useBass ? (B[i]>0.15?B[i]*B[i]:B[i]*0.05) : S[i];
+      if(w<=0) continue;
+      // best resonance across the pulse-train subdivisions
+      let best=0;
+      for(const c of combs){
+        const p=period/c.div;
+        const ph=((T[i]-phase)%p+p)%p;
+        const d=Math.min(ph, p-ph);
+        const sig=sigma/c.div;
+        const r=c.w*Math.exp(-(d*d)/(2*sig*sig));
+        if(r>best)best=r;
+      }
+      score+=w*best; wsum+=w;
+    }
+    return wsum?score/wsum:0;
+  }
 
   // Coarse BPM sweep across the playable range (60–220), 0.5 BPM steps.
   const results=[];
@@ -788,35 +835,27 @@ function fitTempo(){
     const {phase,score}=bestPhase(period);
     if(score>refScore){refScore=score;refBpm=bpm;refPhase=phase;}
   }
-  // ── KICK-ANCHORED OFFSET ──
-  // BPM and a rough phase are now locked (via strength-based alignment, which is
-  // good at finding the pulse). But the OFFSET a player feels is the kick/down-
-  // beat, which may sit at a different sub-beat position than the onset-average
-  // phase. So re-find the phase using bass-weighted alignment, scanning the FULL
-  // beat (not just near refPhase) so it can lock onto the kick wherever it is.
+  // ── COMB-FILTER KICK-ANCHORED OFFSET ──
+  // BPM and a rough phase are locked. Now find the OFFSET the player feels using
+  // COMB-FILTER alignment (pulse train at the beat + metrical subdivisions),
+  // bass-weighted so it anchors to the kick. The comb is more robust to
+  // syncopation than the old single-pulse aligner — offbeat onsets resonate with
+  // the sub-beat combs instead of dragging the main beat off-phase.
   const period=60/refBpm;
-  let polishPhase=refPhase,polishScore=alignKick(period,refPhase);
-  // coarse full-beat scan for the kick
+  const bassTotal=B.reduce((a,b)=>a+b,0);
+  const useBass = bassTotal >= 0.5; // if there's a real kick, anchor to it
+  let polishPhase=refPhase,polishScore=alignComb(period,refPhase,useBass);
+  // coarse full-beat scan
   const KSTEPS=128;
   for(let k=0;k<KSTEPS;k++){
     const off=k*period/KSTEPS;
-    const s=alignKick(period,off);
+    const s=alignComb(period,off,useBass);
     if(s>polishScore){polishScore=s;polishPhase=off;}
   }
-  // fine ~1ms polish around the best kick phase
+  // fine ~1ms polish around the best phase
   for(let off=polishPhase-period*0.05;off<=polishPhase+period*0.05;off+=0.001){
-    const s=alignKick(period,off);
+    const s=alignComb(period,off,useBass);
     if(s>polishScore){polishScore=s;polishPhase=off;}
-  }
-  // If there's essentially no bass in the song (no kick to anchor to), fall back
-  // to the strength-based phase so we don't lock onto noise.
-  const bassTotal=B.reduce((a,b)=>a+b,0);
-  if(bassTotal < 0.5){
-    polishPhase=refPhase;
-    for(let off=refPhase-period*0.1;off<=refPhase+period*0.1;off+=0.001){
-      const s=align(period,off);
-      if(s>polishScore){polishScore=s;polishPhase=off;}
-    }
   }
   // Wrap the phase to the NEAREST beat. A song with a built-in lead-in (e.g.
   // ~0.4s ≈ a whole beat at 140 BPM) would otherwise land near a full beat and
