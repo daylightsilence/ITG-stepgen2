@@ -194,6 +194,16 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
           <span id="manualMeasNow" style="font-size:11px;color:var(--accent);font-family:'Orbitron',monospace;min-width:64px;text-align:right">m —</span>
         </span>
       </div>
+      <div id="manualSyncRow" style="display:flex;gap:8px;margin:4px 0;font-size:10px;align-items:center;flex-wrap:wrap">
+        <label style="display:flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--accent)">
+          <input type="checkbox" id="metroToggle"/> Beat clap
+        </label>
+        <span style="color:var(--muted)">Sync by ear:</span>
+        <button id="offsetDownBtn" class="toggle-all" title="Beat feels late → arrows earlier">− offset</button>
+        <span id="offsetLiveVal" style="font-family:'Orbitron',monospace;color:var(--accent2);min-width:70px;text-align:center">0.000s</span>
+        <button id="offsetUpBtn" class="toggle-all" title="Beat feels early → arrows later">+ offset</button>
+        <span style="color:var(--muted);font-size:9px">clap should land on the beat</span>
+      </div>
       <div id="manualDiffRow" style="display:flex;gap:6px;margin:4px 0;font-size:10px;align-items:center;flex-wrap:wrap">
         <span style="color:var(--muted)">Editing:</span>
         <button class="diff-sel" data-diff="0">Easy</button>
@@ -1685,14 +1695,54 @@ function manualPlay(){
   manualSource.start(0, manualPlayStartOffset);
   manualPlaying=true;
   document.getElementById('manualPlayBtn').textContent='❚❚ Pause';
+  metroNextBeat=0; // reset click scheduler
   const loop=()=>{
     if(!manualPlaying) return;
     const elapsed=ctx.currentTime-manualPlayStartCtxTime+manualPlayStartOffset;
     if(elapsed>=audioBuffer.duration){ manualStop(); return; }
+    scheduleMetronome(ctx, elapsed);
     drawManualTimeline(elapsed);
     manualRAF=requestAnimationFrame(loop);
   };
   loop();
+}
+// ── METRONOME: a short click on each beat, positioned by BPM + live offset, so
+// the user can nudge the offset until the clap lines up with the music's beat.
+let metroNextBeat=0;
+function metroCurrentOffset(){
+  // the offset used for the clap grid = detected auto-offset + user's live nudge
+  const useAutoOff=document.getElementById('ruleAutoOffset')?.checked ?? true;
+  const userFine=+(document.getElementById('offset')?.value||0);
+  return (useAutoOff?detectedOffset:0)+userFine;
+}
+function scheduleMetronome(ctx, elapsedNow){
+  const on=document.getElementById('metroToggle')?.checked;
+  if(!on){ return; }
+  const bpm=detectedBPM||120, beat=60/bpm, off=metroCurrentOffset();
+  // schedule any beats falling in the next ~200ms window
+  const lookahead=0.2;
+  // beat time in SONG time = off + n*beat. Convert to ctx time.
+  let n=Math.max(0, Math.ceil((elapsedNow-off)/beat));
+  for(let k=0;k<8;k++){
+    const beatSongTime=off+n*beat;
+    const dt=beatSongTime-elapsedNow; // seconds from now
+    if(dt<0){n++;continue;}
+    if(dt>lookahead) break;
+    if(n>metroNextBeat-1){
+      clickAt(ctx, ctx.currentTime+dt, n%4===0); // accent the downbeat
+      metroNextBeat=n+1;
+    }
+    n++;
+  }
+}
+function clickAt(ctx, when, accent){
+  const osc=ctx.createOscillator(), g=ctx.createGain();
+  osc.frequency.value=accent?1600:1100;
+  g.gain.setValueAtTime(0.0001,when);
+  g.gain.exponentialRampToValueAtTime(accent?0.5:0.3,when+0.001);
+  g.gain.exponentialRampToValueAtTime(0.0001,when+0.05);
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start(when); osc.stop(when+0.06);
 }
 function manualPause(){
   if(!manualPlaying) return;
@@ -1860,6 +1910,19 @@ async function makeImg(title,artist,w,h,artImg){
   const stopBtn=document.getElementById('manualStopBtn');
   if(playBtn) playBtn.addEventListener('click',()=>{ manualPlaying?manualPause():manualPlay(); });
   if(stopBtn) stopBtn.addEventListener('click',()=>manualStop());
+  // Offset nudge buttons — adjust the user fine-tune offset live so the beat
+  // clap (and exported sync) can be tuned by ear during playback.
+  const offEl=document.getElementById('offset');
+  const liveVal=document.getElementById('offsetLiveVal');
+  const refreshOffsetVal=()=>{ if(liveVal&&offEl) liveVal.textContent=(+offEl.value>=0?'+':'')+(+offEl.value).toFixed(3)+'s'; };
+  refreshOffsetVal();
+  const nudge=(d)=>{ if(!offEl)return; offEl.value=((+offEl.value)+d).toFixed(3); refreshOffsetVal();
+    // update the offset slider label if present
+    const ov=document.getElementById('offsetVal'); if(ov)ov.textContent=(+offEl.value)+'s'; };
+  document.getElementById('offsetDownBtn')?.addEventListener('click',()=>nudge(-0.005)); // 5ms earlier
+  document.getElementById('offsetUpBtn')?.addEventListener('click',()=>nudge(+0.005));   // 5ms later
+  // keep the live readout in sync if the user drags the main offset slider
+  if(offEl) offEl.addEventListener('input',refreshOffsetVal);
   // Save painted regions (all difficulties) to a JSON file
   const saveBtn=document.getElementById('manualSaveBtn');
   if(saveBtn) saveBtn.addEventListener('click',()=>{
@@ -1980,7 +2043,18 @@ function applyManualPaint(a,b,mode){
     }
   }
   manualRegionsByDiff[manualActiveDiff]=merged; manualTouched[manualActiveDiff]=true;
+  // Auto-copy as a STARTING POINT: any difficulty the user hasn't touched yet
+  // inherits a copy of what was just painted, so painting one difficulty seeds
+  // the others. Untouched difficulties stay flagged untouched (so if the user
+  // later edits them they become custom; and further edits here keep seeding
+  // the still-blank ones). We deep-copy so edits to one don't affect another.
+  for(let d=0; d<manualRegionsByDiff.length; d++){
+    if(d!==manualActiveDiff && !manualTouched[d]){
+      manualRegionsByDiff[d]=merged.map(r=>({...r}));
+    }
+  }
   drawManualTimeline(manualPlaying?null:manualPlayStartOffset);
+  updateManualReadout();
 }
 
 document.getElementById('genBtn').addEventListener('click',async()=>{
