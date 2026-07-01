@@ -198,6 +198,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
         <label style="display:flex;align-items:center;gap:5px;cursor:pointer;text-transform:none;letter-spacing:0;color:var(--accent)">
           <input type="checkbox" id="metroToggle"/> Beat clap
         </label>
+        <input type="range" id="metroVol" min="0" max="3" value="1.5" step="0.1" title="Clap volume" style="width:70px"/>
         <span style="color:var(--muted)">Sync by ear:</span>
         <button id="offsetDownBtn" class="toggle-all" title="Beat feels late → arrows earlier">− offset</button>
         <span id="offsetLiveVal" style="font-family:'Orbitron',monospace;color:var(--accent2);min-width:70px;text-align:center">0.000s</span>
@@ -1736,16 +1737,21 @@ function scheduleMetronome(ctx, elapsedNow){
   }
 }
 function clickAt(ctx, when, accent){
-  // A short filtered noise burst — cuts through music better than a sine tone,
-  // reads as a clap/tick. Accented downbeat is louder and brighter.
-  const dur=0.04;
+  // Loud, punchy tick: a sharp noise transient through a high-pass so it cuts
+  // clearly through the music. Downbeat is louder/brighter. Kept short so it
+  // reads as a precise point in time you can line up against the beat.
+  const dur=0.05;
   const buf=ctx.createBuffer(1, Math.ceil(ctx.sampleRate*dur), ctx.sampleRate);
   const d=buf.getChannelData(0);
-  for(let i=0;i<d.length;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,2); } // decaying noise
+  for(let i=0;i<d.length;i++){ d[i]=(Math.random()*2-1)*Math.pow(1-i/d.length,3); } // fast-decay noise
   const src=ctx.createBufferSource(); src.buffer=buf;
-  const bp=ctx.createBiquadFilter(); bp.type='bandpass'; bp.frequency.value=accent?2500:1800; bp.Q.value=1.2;
-  const g=ctx.createGain(); g.gain.value=accent?1.0:0.7;
-  src.connect(bp); bp.connect(g); g.connect(ctx.destination);
+  const hp=ctx.createBiquadFilter(); hp.type='highpass'; hp.frequency.value=accent?1500:1100;
+  const vol=+(document.getElementById('metroVol')?.value ?? 1.5);
+  const g=ctx.createGain(); g.gain.value=(accent?3.0:2.2)*vol; // loud — this is a tuning aid, meant to stand out
+  // a short compressor-ish hard limit so it stays punchy without clipping harshly
+  const comp=ctx.createDynamicsCompressor();
+  comp.threshold.value=-6; comp.ratio.value=12; comp.attack.value=0.001; comp.release.value=0.05;
+  src.connect(hp); hp.connect(g); g.connect(comp); comp.connect(ctx.destination);
   src.start(when); src.stop(when+dur+0.01);
 }
 function manualPause(){
@@ -2121,7 +2127,14 @@ document.getElementById('dlBtn').addEventListener('click',async()=>{
   if(!lastGeneratedData){log('Generate first!','err');return;}
   const btn=document.getElementById('dlBtn');btn.disabled=true;btn.textContent='⏳ Packing...';
   try{
-    const{title,artist,bpm,offset,charts,ext,safe}=lastGeneratedData;
+    const{title,artist,bpm,charts,ext,safe}=lastGeneratedData;
+    // Re-read the offset LIVE at download time (not the value frozen at Preview),
+    // so any offset nudging done by ear with the beat clap AFTER previewing is
+    // actually applied to the exported #OFFSET.
+    const useAutoOff=document.getElementById('ruleAutoOffset').checked;
+    const userFine=+document.getElementById('offset').value;
+    const use9ms=document.getElementById('rule9ms').checked;
+    const offset=(useAutoOff?detectedOffset:0)+userFine+(use9ms?0.009:0);
     // Export only the difficulties the user checked (if the picker is shown).
     let exportCharts=charts;
     const boxes=[...document.querySelectorAll('.export-diff')];
