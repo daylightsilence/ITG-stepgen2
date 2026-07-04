@@ -1002,7 +1002,11 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   // length and set the break length between runs.
   const userMaxRun=+(document.getElementById('maxRun')?.value ?? 32);   // beats
   const userMinBreak=+(document.getElementById('minBreak')?.value ?? 4); // beats
-  const leadIn=+document.getElementById('offset').value;
+  // NOTE: the user's fine-tune offset is deliberately NOT applied here. It is
+  // applied exactly once, to the exported #OFFSET (and the beat-clap grid), so
+  // nudging shifts playback sync without moving notes. Applying it in both
+  // places double-shifted the sync (the original bug this replaces).
+  const leadIn=0;
   const RPB=4, beatDur=60/bpm, rowDur=beatDur/RPB;
   const totalBeats=Math.min(Math.floor(duration/beatDur),Math.floor(600/beatDur));
   const totalRows=totalBeats*RPB;
