@@ -67,7 +67,16 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
 .db.med{color:#ffb800;border-color:#ffb800;background:rgba(255,184,0,.08);}
 .db.hard{color:#ff3cac;border-color:#ff3cac;background:rgba(255,60,172,.08);}
 .pat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin-top:4px;}
-.pat-chip{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:10px;color:var(--muted);cursor:pointer;text-align:center;transition:border-color .15s,color .15s;user-select:none;}
+.pat-chip{background:var(--bg);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:10px;color:var(--muted);cursor:pointer;text-align:center;transition:border-color .15s,color .15s;user-select:none;position:relative;}
+.pat-tip{display:none;position:absolute;left:50%;transform:translateX(-50%);bottom:calc(100% + 6px);background:#1a1a26;border:1px solid var(--accent3);border-radius:6px;padding:7px 10px;z-index:50;white-space:nowrap;box-shadow:0 4px 14px #000a;pointer-events:none;}
+.pat-chip:hover .pat-tip{display:block;}
+.pat-tip-arrows{display:flex;gap:5px;justify-content:center;margin-bottom:4px;}
+.pt-a{font-size:20px;line-height:1;font-weight:bold;}
+.pt-a0{color:#ff5d8f;}   /* Left */
+.pt-a1{color:#4ecdc4;}   /* Down */
+.pt-a2{color:#ffd166;}   /* Up */
+.pt-a3{color:#6a8dff;}   /* Right */
+.pat-tip-info{font-size:9px;color:var(--muted);text-align:center;}
 .pat-chip.on{border-color:var(--accent3);color:var(--text);background:rgba(123,47,255,.12);}
 .toggle-all{background:var(--bg);border:1px solid var(--accent3);color:var(--accent);font-family:'Inter',sans-serif;font-size:9px;padding:2px 8px;border-radius:3px;cursor:pointer;text-transform:none;letter-spacing:0;}
 .paint-mode{background:var(--bg);border:1px solid var(--border);color:var(--muted);font-family:'Inter',sans-serif;font-size:10px;padding:3px 10px;border-radius:3px;cursor:pointer;}
@@ -137,7 +146,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
       <div class="field"><label>Jump density <span id="jumpDensityVal">High</span></label><input type="range" id="jumpDensity" min="0" max="4" value="3" step="1"/></div>
       <div class="field"><label>Hold density <span id="holdDensityVal">High</span></label><input type="range" id="holdDensity" min="0" max="4" value="3" step="1"/></div>
       <div class="field"><label>Onset sensitivity <span id="onsetSensVal">0.4</span></label><input type="range" id="onsetSens" min="0.1" max="0.9" value="0.4" step="0.05"/></div>
-      <div class="field"><label>Fine-tune offset (s) <span id="offsetVal">0.000</span></label><input type="range" id="offset" min="-0.5" max="2" value="0" step="0.001"/></div>
+      <div class="field"><label>Fine-tune offset (s) <span id="offsetVal">0.000</span></label><input type="range" id="offset" min="-0.1" max="0.1" value="0" step="0.001"/></div>
     </div>
     <div>
       <div class="sec">Rules</div>
@@ -262,8 +271,12 @@ const PATTERNS = {
   "Sweep A":       {seq:[0,3,0,2,1,2],      cat:"spiral",  group:"stamina",minDiff:4},
   "Sweep B":       {seq:[3,0,3,1,2,1],      cat:"spiral",  group:"stamina",minDiff:4},
   // ── TECH: intentionally non-alternating ──────────────────────────
-  "Gallop L":      {seq:[0,1,1,2],          cat:"gallop",     group:"tech",   minDiff:3},
-  "Gallop R":      {seq:[3,2,2,1],          cat:"gallop",     group:"tech",   minDiff:3},
+  // (Names/shapes checked against ITG Wiki tech notation + DDRCommunity pattern
+  // guide: jacks = repeated same arrow; sideswitch = repeated SIDE panel with
+  // alternating feet, usually entered via crossover; candle = a foot passing
+  // over the center, e.g. Up-Left-Down; drill = long two-arrow alternation.)
+  "Jacks L":       {seq:[0,1,1,2],          cat:"gallop",     group:"tech",   minDiff:3},
+  "Jacks R":       {seq:[3,2,2,1],          cat:"gallop",     group:"tech",   minDiff:3},
   "Candle A":      {seq:[2,0,1],            cat:"candle",     group:"tech",   minDiff:3},
   "Candle B":      {seq:[1,3,2],            cat:"candle",     group:"tech",   minDiff:3},
   "Crossover L":   {seq:[0,1,3,2],          cat:"crossover",  group:"tech",   minDiff:4},
@@ -274,10 +287,10 @@ const PATTERNS = {
   "Anchor R":      {seq:[3,1,3,2,3,0],      cat:"anchor",     group:"tech",   minDiff:4},
   "Footswitch L":  {seq:[0,0,1,2],          cat:"footswitch", group:"tech",   minDiff:5},
   "Footswitch R":  {seq:[3,3,2,1],          cat:"footswitch", group:"tech",   minDiff:5},
-  "Sideswitch L":  {seq:[0,1,0,2,0,1],      cat:"sideswitch", group:"tech",   minDiff:6},
-  "Sideswitch R":  {seq:[3,2,3,1,3,2],      cat:"sideswitch", group:"tech",   minDiff:6},
-  "Split LU":      {seq:[0,2,1,3],          cat:"split",      group:"tech",   minDiff:7},
-  "Split DR":      {seq:[1,3,0,2],          cat:"split",      group:"tech",   minDiff:7},
+  "Sideswitch L":  {seq:[1,0,0,2],          cat:"sideswitch", group:"tech",   minDiff:6},
+  "Sideswitch R":  {seq:[2,3,3,1],          cat:"sideswitch", group:"tech",   minDiff:6},
+  "Spread A":      {seq:[2,0,3,1],          cat:"split",      group:"tech",   minDiff:7},
+  "Spread B":      {seq:[1,3,0,2],          cat:"split",      group:"tech",   minDiff:7},
 };
 
 // Tag each pattern with whether it strictly alternates feet, and validate
@@ -312,13 +325,19 @@ const activePats=new Set(Object.keys(PATTERNS).filter(n=>PATTERNS[n].cat!=='cros
 (function(){
   const grids={stamina:document.getElementById('patGridStamina'),tech:document.getElementById('patGridTech')};
   const chipFor={};
+  const GLYPH=['←','↓','↑','→'];
   Object.keys(PATTERNS).forEach(name=>{
     const p=PATTERNS[name];
     if(p.mirror) return;
     const chip=document.createElement('div');
     chip.className='pat-chip'+(activePats.has(name)?' on':'');
     chip.textContent=name;
-    chip.title=p.cat+' · min block '+p.minDiff;
+    // Hover example: the pattern rendered as its arrow sequence, plus info line.
+    const tip=document.createElement('div');
+    tip.className='pat-tip';
+    tip.innerHTML='<div class="pat-tip-arrows">'+p.seq.map(x=>'<span class="pt-a pt-a'+x+'">'+GLYPH[x]+'</span>').join('')+'</div>'
+      +'<div class="pat-tip-info">'+p.cat+' · min block '+p.minDiff+(p.alt?' · alternating':' · tech (non-alt)')+'</div>';
+    chip.appendChild(tip);
     chip.addEventListener('click',()=>{
       const mn=name+' ⟳';
       if(activePats.has(name)){activePats.delete(name);activePats.delete(mn);chip.classList.remove('on');}
@@ -723,12 +742,15 @@ let bpmCandidates=[];
 function fitTempo(){
   bpmCandidates=[];
   if(!onsetTimes||onsetTimes.length<4){detectedOffset=0;return 120;}
-  // For performance, fit against the strongest onsets (up to 400), but keep
-  // them in time order so phase math stays correct.
+  // For performance, fit against a subset of onsets — but the subset must keep
+  // BOTH the strongest onsets AND the strongest BASS onsets. Selecting purely by
+  // strength can drop every kick on hat/snare-heavy songs (hats outrank kicks),
+  // which silently breaks the kick-anchored offset and the octave test.
   let idx=onsetTimes.map((t,i)=>i);
   if(idx.length>400){
-    idx.sort((a,b)=>(onsetStrengths[b]||0)-(onsetStrengths[a]||0));
-    idx=idx.slice(0,400).sort((a,b)=>a-b);
+    const byStrength=[...idx].sort((a,b)=>(onsetStrengths[b]||0)-(onsetStrengths[a]||0)).slice(0,300);
+    const byBass=[...idx].sort((a,b)=>(onsetBass[b]||0)-(onsetBass[a]||0)).slice(0,200);
+    idx=[...new Set([...byStrength,...byBass])].sort((a,b)=>a-b);
   }
   const T=idx.map(i=>onsetTimes[i]);
   const S=idx.map(i=>(onsetStrengths&&onsetStrengths[i])||1);
@@ -845,6 +867,30 @@ function fitTempo(){
     const period=60/bpm;
     const {phase,score}=bestPhase(period);
     if(score>refScore){refScore=score;refBpm=bpm;refPhase=phase;}
+  }
+  // ── OCTAVE CORRECTION (kick-spacing test) ──
+  // The fold above caps at 185, so a true 186–220 BPM song gets HALVED (200→100)
+  // and the whole chart generates at half-time. The reliable discriminator is
+  // the KICK spacing: if the strong-bass onsets land at ~half the chosen beat
+  // period, the tempo was folded down — double it back (within the 220 sweep cap).
+  {
+    const kicks=T.filter((t,i)=>B[i]>0.4);
+    if(kicks.length>=8 && refBpm*2<=220){
+      const gaps=[];
+      for(let i=1;i<kicks.length;i++){const g=kicks[i]-kicks[i-1]; if(g>0.05&&g<2) gaps.push(g);}
+      if(gaps.length>=6){
+        gaps.sort((a,b)=>a-b);
+        const medGap=gaps[Math.floor(gaps.length/2)];
+        const period0=60/refBpm;
+        // kicks predominantly at half the beat → tempo is folded; unfold it
+        if(medGap < period0*0.65){
+          refBpm*=2;
+          const p2=60/refBpm;
+          const bp=bestPhase(p2);
+          refPhase=bp.phase; refScore=bp.score;
+        }
+      }
+    }
   }
   // ── COMB-FILTER KICK-ANCHORED OFFSET ──
   // BPM and a rough phase are locked. Now find the OFFSET the player feels using
@@ -1532,7 +1578,7 @@ function notesToSM(notes,jumpRows){
 
 function buildSM(title,artist,bpm,offset,charts,ext,safe){
   const diffNames=['Beginner','Easy','Medium','Hard','Challenge'];
-  const base=5-charts.length;
+  const base=4-charts.length; // 3 charts → Easy/Medium/Hard (matches UI labels); 2 → Medium/Hard; 1 → Hard
   // StepMania #OFFSET is the audio-time of beat 0 (the first beat of the grid).
   // For a song that starts on/near a beat this is a small POSITIVE value — the
   // reference chart "A Long Fall" uses #OFFSET:0.009000 (just the ITG 9ms bias).
@@ -2131,7 +2177,7 @@ function populateExportPicker(charts){
   list.innerHTML='';
   // difficulty slot names, same logic as buildSM
   const diffNames=['Beginner','Easy','Medium','Hard','Challenge'];
-  const base=5-charts.length;
+  const base=4-charts.length; // 3 charts → Easy/Medium/Hard (matches UI labels); 2 → Medium/Hard; 1 → Hard
   charts.forEach((c,i)=>{
     const name=diffNames[Math.min(base+i,4)];
     const lbl=document.createElement('label');
