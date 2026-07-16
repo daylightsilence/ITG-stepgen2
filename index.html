@@ -143,9 +143,14 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
       <div class="sec">Stream Rules</div>
       <div class="field"><label>Max run length (beats) <span id="maxRunVal">32</span></label><input type="range" id="maxRun" min="8" max="128" value="32" step="4"/></div>
       <div class="field"><label>Break length (beats) <span id="minBreakVal">4</span></label><input type="range" id="minBreak" min="1" max="16" value="4"/></div>
-      <div class="field"><label>Jump density <span id="jumpDensityVal">High</span></label><input type="range" id="jumpDensity" min="0" max="4" value="3" step="1"/></div>
+            <div class="field" style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px">
+        <label>Remix existing chart <span style="text-transform:none;letter-spacing:0;color:var(--muted)">— keep timing &amp; rhythm, re-step with pattern rules</span></label>
+        <button id="restepBtn" class="toggle-all" style="width:100%;margin-top:4px">⟳ RE-STEP AN .SM / .SSC FILE</button>
+        <input type="file" id="restepInput" accept=".sm,.ssc" style="display:none"/>
+      </div>
+      <div class="field"><label>Jump density <span id="jumpDensityVal">Medium</span></label><input type="range" id="jumpDensity" min="0" max="4" value="2" step="1"/></div>
       <div class="field"><label>Hold density <span id="holdDensityVal">High</span></label><input type="range" id="holdDensity" min="0" max="4" value="3" step="1"/></div>
-      <div class="field"><label>Onset sensitivity <span id="onsetSensVal">0.4</span></label><input type="range" id="onsetSens" min="0.1" max="0.9" value="0.4" step="0.05"/></div>
+      <div class="field"><label>Onset sensitivity <span id="onsetSensVal">0.4</span></label><input type="range" id="onsetSens" min="0.1" max="0.9" value="0.55" step="0.05"/></div>
       <div class="field"><label>Fine-tune offset (s) <span id="offsetVal">0.000</span></label><input type="range" id="offset" min="-0.1" max="0.1" value="0" step="0.001"/></div>
     </div>
     <div>
@@ -155,6 +160,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
       <div class="tog-row"><label for="ruleAutoOffset">Auto-detect beat offset</label><label class="toggle"><input type="checkbox" id="ruleAutoOffset" checked/><span class="sl"></span></label></div>
       <div class="tog-row"><label for="onsetSnap">Snap steps to melody grid</label><label class="toggle"><input type="checkbox" id="onsetSnap" checked/><span class="sl"></span></label></div>
       <div class="tog-row"><label for="melodyClose">Follow melody closely <span style="color:var(--muted);font-size:9px">(quiet parts)</span></label><label class="toggle"><input type="checkbox" id="melodyClose"/><span class="sl"></span></label></div>
+      <div class="tog-row"><label for="fineQuant">Fine melody timing (24ths/32nds)</label><label class="toggle"><input type="checkbox" id="fineQuant"/><span class="sl"></span></label></div>
       <div class="tog-row"><label for="forceBreaks">Force breaks in quiet sections</label><label class="toggle"><input type="checkbox" id="forceBreaks" checked/><span class="sl"></span></label></div>
       <div class="rules-group">Intensity &amp; Stamina</div>
       <div class="tog-row"><label for="staminaMode">Stamina mode (long continuous streams)</label><label class="toggle"><input type="checkbox" id="staminaMode" checked/><span class="sl"></span></label></div>
@@ -467,6 +473,20 @@ async function handleAudio(file){
   setP(42);log('Analyzing energy...');await tick();computeEnergy();
   setP(45);log('Detecting onsets...');await tick();computeOnsets();
   setP(65);log('Fitting tempo + offset...');await tick();detectedBPM=detectBPM();
+  // High-BPM second pass: onset detection ran with a 50ms merge window (so
+  // flams/grace notes collapse to one hit), but above ~135 BPM a genuine
+  // 32nd pair is closer than that and would merge too. Now that the BPM is
+  // known, re-detect with the window scaled to the song's own 32nd duration
+  // and re-fit, so fast songs keep their 32nds chartable.
+  {
+    const thirtySecond=60/detectedBPM/8;
+    if(thirtySecond<0.055){
+      const g=Math.max(0.02, thirtySecond*0.75);
+      log('High BPM ('+detectedBPM+') — re-detecting onsets with '+Math.round(g*1000)+'ms window for 32nds...','');
+      computeOnsets(g);
+      detectedBPM=detectBPM();
+    }
+  }
   document.getElementById('bpmBadge').textContent=detectedBPM.toFixed(1)+' BPM';
   setP(80);
   await tick();
@@ -532,63 +552,458 @@ function fftRadix2(re,im){
   }
 }
 
-async function computeSpectralFeatures(){
-  const srcSr=audioBuffer.sampleRate;
-  const src=audioBuffer.getChannelData(0);
-  const src2=audioBuffer.numberOfChannels>1?audioBuffer.getChannelData(1):null;
-  // Downsample to ~22kHz mono for speed (halves the work, no loss for our needs)
-  const targetSr=22050;
-  const ratio=srcSr/targetSr;
-  const dsLen=Math.floor(src.length/ratio);
-  const mono=new Float32Array(dsLen);
-  for(let i=0;i<dsLen;i++){
-    const si=Math.floor(i*ratio);
-    mono[i]=src2?(src[si]+src2[si])*0.5:src[si];
+// ═══════════════════════════════════════════════════════════════════
+// V2 AUDIO ENGINE — ArrowVortex-style analysis
+// Based on Bram van de Wetering, "Non-causal Beat Tracking for Rhythm
+// Games" (the algorithm inside ArrowVortex), adapted to JS.
+//
+// Pipeline:
+//   1. STFT (1024 window / 256 hop, Hann) → log-magnitude spectra
+//   2. Onset detection: spectral flux (full-band for beat; mid-band
+//      250–4000 Hz for melody in weak-beat sections), adaptive
+//      threshold, leading-edge timestamps. Per-onset bass energy and
+//      spectral centroid preserved for the generator's melody logic.
+//   3. Tempo: gap-confidence method — wrap onsets modulo candidate
+//      beat intervals (sample domain, 89–205 BPM), score phase
+//      positions with a Hamming window (+0.5× offbeat support),
+//      detrend fitness with a cubic polynomial fit (removes the
+//      long-interval bias that octave-folding hacks around), refine,
+//      dedupe, evidence-based integer rounding.
+//   4. Offset: best gap position at the winning tempo, then resolve
+//      beat-vs-offbeat with a waveform slope envelope (50 ms rising-
+//      energy), then wrap to the nearest beat for a small ±ms offset.
+// ═══════════════════════════════════════════════════════════════════
+// (specFrames/specFrameTimes/specHopSec declared globally above)
+let odfN=0, odfSr=44100, odfHop=256, odfWin=1024;
+let odfFlux=null, odfMel=null, odfBass=null, odfCent=null, odfBassFlux=null;
+let monoData=null; // mono samples kept for the slope-based offset stage
+
+function _fftRadix2(re,im){
+  const n=re.length;
+  for(let i=1,j=0;i<n;i++){
+    let bit=n>>1;
+    for(;j&bit;bit>>=1)j^=bit;
+    j|=bit;
+    if(i<j){let t=re[i];re[i]=re[j];re[j]=t;t=im[i];im[i]=im[j];im[j]=t;}
   }
-  const sr=targetSr;
-
-  const FFT=2048, HOP=512;
-  const nFrames=Math.max(0,Math.floor((mono.length-FFT)/HOP));
-  // Hann window
-  const win=new Float32Array(FFT);
-  for(let i=0;i<FFT;i++) win[i]=0.5-0.5*Math.cos(2*Math.PI*i/(FFT-1));
-  // Band edges in Hz → FFT bin indices. bin = f / (sr/FFT)
-  const binHz=sr/FFT;
-  const edges=[20,120,250,2000,6000,sr/2]; // 5 bands between these edges
-  const bandBins=[];
-  for(let bnd=0;bnd<NBANDS;bnd++){
-    const lo=Math.max(1,Math.floor(edges[bnd]/binHz));
-    const hi=Math.min(FFT/2,Math.ceil(edges[bnd+1]/binHz));
-    bandBins.push([lo,hi]);
-  }
-
-  specFrames=[]; specFrameTimes=[]; specHopSec=HOP/sr;
-  const re=new Float32Array(FFT), im=new Float32Array(FFT);
-
-  // Process in chunks so the UI can breathe (yield every ~400 frames).
-  for(let f=0;f<nFrames;f++){
-    const base=f*HOP;
-    for(let i=0;i<FFT;i++){re[i]=mono[base+i]*win[i];im[i]=0;}
-    fftRadix2(re,im);
-    const bands=new Float32Array(NBANDS);
-    for(let bnd=0;bnd<NBANDS;bnd++){
-      const [lo,hi]=bandBins[bnd];
-      let sum=0;
-      for(let k=lo;k<hi;k++){sum+=re[k]*re[k]+im[k]*im[k];}
-      bands[bnd]=Math.sqrt(sum/Math.max(1,hi-lo));
+  for(let len=2;len<=n;len<<=1){
+    const ang=-2*Math.PI/len, wr=Math.cos(ang), wi=Math.sin(ang);
+    for(let i=0;i<n;i+=len){
+      let cwr=1,cwi=0;
+      for(let k=0;k<len/2;k++){
+        const ur=re[i+k],ui=im[i+k];
+        const vr=re[i+k+len/2]*cwr-im[i+k+len/2]*cwi;
+        const vi=re[i+k+len/2]*cwi+im[i+k+len/2]*cwr;
+        re[i+k]=ur+vr;im[i+k]=ui+vi;
+        re[i+k+len/2]=ur-vr;im[i+k+len/2]=ui-vi;
+        const nwr=cwr*wr-cwi*wi;cwi=cwr*wi+cwi*wr;cwr=nwr;
+      }
     }
-    specFrames.push(bands);
-    specFrameTimes.push(base/sr);
-    if((f&511)===0){setP(20+Math.round(f/nFrames*22));await tick();}
   }
-  // Normalize each band to its own max so they're comparable 0-1.
-  const maxB=new Float32Array(NBANDS);
-  for(const fr of specFrames)for(let b=0;b<NBANDS;b++)if(fr[b]>maxB[b])maxB[b]=fr[b];
-  for(const fr of specFrames)for(let b=0;b<NBANDS;b++)fr[b]=maxB[b]?fr[b]/maxB[b]:0;
-  log('Spectral analysis: '+specFrames.length+' frames, '+NBANDS+' bands','ok');
 }
 
-// ── Energy ────────────────────────────────────────────────────────
+async function computeSpectralFeatures(){
+  const sr=audioBuffer.sampleRate; odfSr=sr;
+  // mono mixdown (also kept for the offset slope stage)
+  const c0=audioBuffer.getChannelData(0);
+  if(audioBuffer.numberOfChannels>1){
+    const c1=audioBuffer.getChannelData(1);
+    monoData=new Float32Array(c0.length);
+    for(let i=0;i<c0.length;i++)monoData[i]=(c0[i]+c1[i])*0.5;
+  }else monoData=c0;
+  const WIN=1024,HOP=256; odfWin=WIN; odfHop=HOP;
+  const useLen=Math.min(monoData.length, Math.floor(sr*150)); // analyze ≤150s
+  const nF=Math.max(0,Math.floor((useLen-WIN)/HOP));
+  odfN=0; // only claim success at the END — if we throw partway, the onset
+          // stage must see odfN=0 and use the time-domain fallback, not run
+          // on empty spectral arrays (which yields 0 onsets → BPM 120/offset 0)
+  odfFlux=new Float32Array(nF); odfMel=new Float32Array(nF);
+  odfBass=new Float32Array(nF); odfCent=new Float32Array(nF);
+  odfBassFlux=new Float32Array(nF);
+  if(nF<3){specFrames=[];return;}
+  specFrames=new Array(nF); // legacy truthy length for old checks
+  specHopSec=HOP/sr;
+  const hann=new Float32Array(WIN);
+  for(let i=0;i<WIN;i++)hann[i]=0.5-0.5*Math.cos(2*Math.PI*i/(WIN-1));
+  const re=new Float32Array(WIN), im=new Float32Array(WIN);
+  const nBins=WIN/2, binHz=sr/WIN;
+  const bMelLo=Math.max(1,Math.round(250/binHz)), bMelHi=Math.min(nBins-1,Math.round(4000/binHz));
+  const bBassLo=Math.max(1,Math.round(25/binHz)), bBassHi=Math.min(nBins-1,Math.round(200/binHz));
+  let prev=new Float32Array(nBins), cur=new Float32Array(nBins);
+  for(let f=0;f<nF;f++){
+    const off=f*HOP;
+    for(let i=0;i<WIN;i++){re[i]=monoData[off+i]*hann[i];im[i]=0;}
+    _fftRadix2(re,im);
+    let flux=0,mel=0,bass=0,bflux=0,cnum=0,cden=0;
+    for(let b=1;b<nBins;b++){
+      const m=Math.sqrt(re[b]*re[b]+im[b]*im[b]);
+      const lm=Math.log1p(8*m);
+      cur[b]=lm;
+      const d=lm-prev[b];
+      if(d>0){flux+=d; if(b>=bMelLo&&b<=bMelHi)mel+=d; if(b>=bBassLo&&b<=bBassHi)bflux+=d;}
+      if(b>=bBassLo&&b<=bBassHi)bass+=m;
+      // centroid over the MELODY BAND only (250–4000 Hz): the generator's
+      // contour-following reads this to trace the melody's rise and fall.
+      // A full-spectrum centroid is dominated by broadband percussion (every
+      // hat yanks it high, every kick low), so the melody trace drowns.
+      if(b>=bMelLo&&b<=bMelHi){cnum+=m*(b*binHz); cden+=m;}
+    }
+    odfFlux[f]=flux; odfMel[f]=mel; odfBass[f]=bass; odfBassFlux[f]=bflux;
+    odfCent[f]=cden>1e-9?cnum/cden:0;
+    const t=prev;prev=cur;cur=t;
+    if((f&2047)===0){setP(15+Math.round(25*f/nF));await new Promise(r=>setTimeout(r,0));}
+  }
+  odfN=nF; // success — spectral path is valid
+}
+
+function computeOnsets(minGapSec){
+  const MINGAP=minGapSec||0.05; // default 50ms; high-BPM re-pass shrinks it
+  const sens=+document.getElementById('onsetSens').value;
+  onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];
+  if(odfN>2){
+    const nF=odfN;
+    let maxF=0,maxM=0,maxBF=0;
+    for(let i=0;i<nF;i++){if(odfFlux[i]>maxF)maxF=odfFlux[i];if(odfMel[i]>maxM)maxM=odfMel[i];if(odfBassFlux[i]>maxBF)maxBF=odfBassFlux[i];}
+    if(maxF<=0)maxF=1;if(maxM<=0)maxM=1;if(maxBF<=0)maxBF=1;
+    // Detection ODF: each band's flux normalized to its OWN max, then combined
+    // with bass emphasized. A 55 Hz kick lives in 1-2 FFT bins while a hat
+    // spans all 511 — under a single full-band normalizer the kick is ~3% of
+    // a hat and never crosses threshold. Per-band normalization (as in v1's
+    // 5-band design and SuperFlux) lets narrowband bass compete fairly.
+    const D=new Float32Array(nF);
+    let maxD=0;
+    for(let i=0;i<nF;i++){
+      const v=odfBassFlux[i]/maxBF + 0.6*odfMel[i]/maxM + 0.4*odfFlux[i]/maxF;
+      D[i]=v; if(v>maxD)maxD=v;
+    }
+    // typical bass level → "weak beat" frames lean on melodic flux (quiet-part
+    // melody pickup, ported from v1 which pad-tested well)
+    const bl=[...odfBass].sort((a,b)=>a-b);
+    const bassMed=bl[Math.floor(bl.length*0.5)]||0;
+    let maxBass=bl[Math.floor(bl.length*0.95)]||1; if(maxBass<=0)maxBass=1;
+    const PWIN=Math.max(4,Math.round(0.35/specHopSec));
+    const MGAP=Math.max(1,Math.round(MINGAP/specHopSec));
+    // Look-ahead bass max per frame: at an attack frame the STFT window only
+    // partially overlaps the sound, so instantaneous bass is near zero even
+    // for a kick — the body arrives a few frames later. Routing the detector
+    // (beat vs melody flux) and reporting onsetBass off the instantaneous
+    // value made kicks invisible; the ~40ms look-ahead max fixes both.
+    const bassAhead=new Float32Array(nF);
+    for(let i=0;i<nF;i++){let m=0;for(let k=i;k<Math.min(nF,i+7);k++)if(odfBass[k]>m)m=odfBass[k];bassAhead[i]=m;}
+    let lastPk=-MGAP;
+    for(let i=1;i<nF-1;i++){
+      // weak-beat frames (no kick nearby) use a lower threshold so quiet
+      // melody onsets are picked up (v1's melody-close behavior, preserved)
+      const beatWeak=bassAhead[i]<bassMed*0.7;
+      const v=D[i];
+      let sum=0,c=0;
+      for(let j=Math.max(0,i-PWIN);j<Math.min(nF,i+PWIN);j++){sum+=D[j];c++;}
+      const thrScale=beatWeak?0.21:0.35;
+      const thr=(sum/c)+sens*maxD*thrScale;
+      if(v>thr&&v>=D[i-1]&&v>D[i+1]&&i-lastPk>=MGAP){
+        // Timestamp at the flux-peak frame, window-center convention, plus a
+        // fixed calibration measured against synthetic ground truth (+4.5ms —
+        // the STFT frame-convention bias; verified rise-time-invariant, so a
+        // constant is the correct model, and it brings offsets to ≈±0.5ms).
+        onsetTimes.push((i*odfHop+odfWin*0.5)/odfSr+0.0045);
+        onsetStrengths.push(maxD?v/maxD:0);
+        // Bass/centroid are sampled over a short look-ahead window: at the
+        // flux-peak frame the STFT window only partially overlaps the sound's
+        // body, so bass hasn't built up yet — the kick's true bass energy
+        // arrives a few frames later (~35ms). Without this, kicks read as
+        // bass≈0.02 and the generator's jump/quiet-zone logic goes blind.
+        onsetBass.push(Math.min(1,bassAhead[i]/maxBass));
+        let cAcc=0,cN=0;
+        for(let k=i;k<Math.min(nF,i+7);k++){cAcc+=odfCent[k];cN++;}
+        onsetCentroid.push(cN?cAcc/cN:odfCent[i]);
+        lastPk=i;
+      }
+    }
+    if(onsetTimes.length>=8){
+      log('Onsets (spectral flux): '+onsetTimes.length,'ok');
+      return;
+    }
+    // too few — clear and fall through to the time-domain fallback below
+    log('Spectral onsets too sparse ('+onsetTimes.length+') — using time-domain fallback','warn');
+    onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];
+  }
+  // ── Fallback: time-domain (no FFT) ──
+  const sr=audioBuffer.sampleRate,d=audioBuffer.getChannelData(0);
+  const USE=Math.min(d.length,sr*120),HOP=1024;
+  const nHops=Math.floor((USE-HOP)/HOP);
+  const flux=new Float32Array(nHops),times=new Float32Array(nHops);
+  let prevE=0;
+  for(let h=0;h<nHops;h++){
+    let e=0;const base=h*HOP;
+    for(let i=base;i<base+HOP;i+=4)e+=d[i]*d[i];
+    const v=Math.max(0,e-prevE);prevE=e;flux[h]=v;times[h]=base/sr;
+  }
+  let maxF=0;for(let i=0;i<nHops;i++)if(flux[i]>maxF)maxF=flux[i];
+  const PWIN=10,MGAP=Math.max(1,Math.round(MINGAP*sr/HOP));let lastHop=-MGAP;
+  for(let i=1;i<nHops-1;i++){
+    const v=flux[i];let sum=0;
+    for(let j=Math.max(0,i-PWIN);j<Math.min(nHops,i+PWIN);j++)sum+=flux[j];
+    const thr=(sum/(PWIN*2))+sens*maxF*0.4;
+    if(v>thr&&v>flux[i-1]&&v>flux[i+1]&&i-lastHop>=MGAP){
+      onsetTimes.push(times[i]);onsetStrengths.push(v/(maxF||1));
+      onsetBass.push(0.5);onsetCentroid.push(0);
+      lastHop=i;
+    }
+  }
+  log('Onsets (time-domain): '+onsetTimes.length,'ok');
+}
+
+// ── Tempo + offset (ArrowVortex gap-confidence method) ─────────────
+let bpmCandidates=[];
+function fitTempo(){
+  bpmCandidates=[];
+  if(!onsetTimes||onsetTimes.length<8){
+    log('Tempo fit FAILED: only '+(onsetTimes?onsetTimes.length:0)+' onsets — offset defaulted to 0. Try raising onset sensitivity.','err');
+    detectedOffset=0;return 120;
+  }
+  const sr=odfSr||audioBuffer.sampleRate;
+  const N=onsetTimes.length;
+  const pos=new Float64Array(N), str=new Float64Array(N);
+  for(let i=0;i<N;i++){pos[i]=onsetTimes[i]*sr; str[i]=onsetStrengths[i]||1;}
+  const MinBPM=89, MaxBPM=205;
+  const minInt=Math.round(sr*60/MaxBPM), maxInt=Math.round(sr*60/MinBPM);
+  const numInt=maxInt-minInt;
+  // Candidate gap positions = the strongest onsets (cost bound), as in AV
+  // where every onset's wrapped position is a candidate.
+  const candIdx=[...Array(N).keys()].sort((a,b)=>str[b]-str[a]).slice(0,120);
+
+  // Hamming windows for the gap-confidence correlation
+  function hamming(n){const w=new Float64Array(n),t=2*Math.PI/(n-1);for(let i=0;i<n;i++)w[i]=0.54-0.46*Math.cos(i*t);return w;}
+  const WFULL=2048, hammCache={};
+  function getHamm(ds){const n=WFULL>>ds;if(!hammCache[n])hammCache[n]=hamming(n);return hammCache[n];}
+
+  // Windowed area of the wrapped-onset histogram around gapPos (wraps ends).
+  function gapWindowArea(hist,histN,gapPos,win){
+    const half=win.length>>1;let area=0;
+    let b=gapPos-half,e=gapPos+half;
+    if(b<0){const wb=b+histN;for(let i=wb;i<histN;i++)area+=hist[i]*win[i-wb];b=0;}
+    if(e>histN){const we=e-histN,io=win.length-we;for(let i=0;i<we;i++)area+=hist[i]*win[i+io];e=histN;}
+    for(let i=b;i<e;i++)area+=hist[i]*win[i-b];
+    return area;
+  }
+  // Confidence of the best gap for an integer interval (sample count).
+  function confInterval(interval,ds,useStrength){
+    const histN=(interval>>ds)+1;
+    const hist=new Float64Array(histN);
+    const wrapped=new Int32Array(N);
+    for(let i=0;i<N;i++){
+      const p=(pos[i]%interval)>>ds;
+      wrapped[i]=p; hist[p]+=useStrength?str[i]:1;
+    }
+    const win=getHamm(ds);const half=(interval>>ds)>>1;
+    let best=0,bestPos=0;
+    for(const ci of candIdx){
+      const p=wrapped[ci];
+      let c=gapWindowArea(hist,histN-1,p,win);
+      c+=0.5*gapWindowArea(hist,histN-1,(p+half)%(histN-1||1),win);
+      if(c>best){best=c;bestPos=p;}
+    }
+    return {conf:best,pos:bestPos<<ds};
+  }
+  // Same but for a float BPM (AV's GetConfidenceForBPM, float modulo).
+  function confBPM(bpm,ds,useStrength,winN){
+    const intervalf=sr*60/bpm, interval=Math.round(intervalf);
+    const histN=(interval>>ds)+1;
+    const hist=new Float64Array(histN);
+    const wrapped=new Int32Array(N);
+    for(let i=0;i<N;i++){
+      const p=Math.floor(pos[i]%intervalf)>>ds;
+      const pc=Math.min(p,histN-1);
+      wrapped[i]=pc; hist[pc]+=useStrength?str[i]:1;
+    }
+    const win=winN?(hammCache['n'+winN]||(hammCache['n'+winN]=hamming(winN))):getHamm(ds);
+    const half=(interval>>ds)>>1;
+    let best=0,bestPos=0;
+    for(const ci of candIdx){
+      const p=wrapped[ci];
+      let c=gapWindowArea(hist,histN-1,p,win);
+      c+=0.5*gapWindowArea(hist,histN-1,(p+half)%(histN-1||1),win);
+      if(c>best){best=c;bestPos=p;}
+    }
+    return {conf:best,pos:bestPos<<ds};
+  }
+  // Cubic least-squares fit y≈c0+c1x+c2x²+c3x³ (detrends interval bias, as AV).
+  function polyfit3(xs,ys){
+    const n=xs.length;const S=new Float64Array(7),T=new Float64Array(4);
+    for(let i=0;i<n;i++){
+      let xp=1;const y=ys[i];
+      for(let k=0;k<7;k++){S[k]+=xp;if(k<4)T[k]+=y*xp;xp*=xs[i];}
+    }
+    const A=[[S[0],S[1],S[2],S[3],T[0]],[S[1],S[2],S[3],S[4],T[1]],[S[2],S[3],S[4],S[5],T[2]],[S[3],S[4],S[5],S[6],T[3]]];
+    for(let col=0;col<4;col++){
+      let piv=col;for(let r=col+1;r<4;r++)if(Math.abs(A[r][col])>Math.abs(A[piv][col]))piv=r;
+      const tmp=A[col];A[col]=A[piv];A[piv]=tmp;
+      if(Math.abs(A[col][col])<1e-12)continue;
+      for(let r=0;r<4;r++){
+        if(r===col)continue;
+        const f=A[r][col]/A[col][col];
+        for(let k=col;k<5;k++)A[r][k]-=f*A[col][k];
+      }
+    }
+    const c=[0,0,0,0];
+    for(let i=0;i<4;i++)c[i]=Math.abs(A[i][i])>1e-12?A[i][4]/A[i][i]:0;
+    return c;
+  }
+  const polyAt=(c,x)=>c[0]+c[1]*x+c[2]*x*x+c[3]*x*x*x;
+
+  // 1. Coarse scan: every 10th interval, downsample 3 (AV constants).
+  const DELTA=10, DSC=3;
+  const fit=new Float64Array(numInt);
+  const cxs=[],cys=[];
+  for(let i=0;i<numInt;i+=DELTA){
+    const r=confInterval(minInt+i,DSC,true);
+    fit[i]=Math.max(0.001,r.conf);
+    cxs.push(minInt+i);cys.push(fit[i]);
+  }
+  // 2. Detrend with cubic fit; find max.
+  const coefs=polyfit3(cxs,cys);
+  let maxFit=0.001;
+  for(let i=0;i<numInt;i+=DELTA){
+    fit[i]-=polyAt(coefs,minInt+i);
+    if(fit[i]>maxFit)maxFit=fit[i];
+  }
+  // 3. Refine ranges around strong coarse points.
+  let cands=[];
+  const thresh=maxFit*0.4;
+  for(let i=0;i<numInt;i+=DELTA){
+    if(fit[i]<=thresh)continue;
+    const b=Math.max(0,i-DELTA),e=Math.min(numInt,i+DELTA);
+    for(let j=b;j<e;j++){
+      if(fit[j]===0){
+        const r=confInterval(minInt+j,DSC,true);
+        fit[j]=Math.max(0.1,r.conf-polyAt(coefs,minInt+j));
+      }
+    }
+    let bi=b;for(let j=b;j<e;j++)if(fit[j]>fit[bi])bi=j;
+    cands.push({bpm:sr*60/(minInt+bi),fitness:fit[bi]});
+  }
+  if(!cands.length){
+    log('Tempo fit FAILED: no interval candidates — offset defaulted to 0.','err');
+    detectedOffset=0;return 120;
+  }
+  cands.sort((a,b)=>b.fitness-a.fitness);
+  // 4. Dedupe near-equal / double / half (AV RemoveDuplicates).
+  for(let i=0;i<cands.length;i++){
+    const b=cands[i].bpm;
+    for(let j=cands.length-1;j>i;j--){
+      const v=cands[j].bpm;
+      if(Math.min(Math.abs(v-b),Math.abs(v-2*b),Math.abs(v-0.5*b))<0.1)cands.splice(j,1);
+    }
+  }
+  // 5. Evidence-based integer rounding (AV RoundBPMValues), full resolution.
+  for(const t of cands){
+    const r=Math.round(t.bpm), d=Math.abs(t.bpm-r);
+    if(d<0.01)t.bpm=r;
+    else if(d<0.08){
+      // Rounding test uses a SHARP 512-sample (~12ms) window: at that width
+      // the true tempo's wrapped-onset spike is fully captured while a
+      // 0.03-off candidate smears past the window edge — so the evidence
+      // genuinely discriminates. (The default 46ms window cannot tell them
+      // apart; both areas match within noise.)
+      const old=confBPM(t.bpm,0,true,512).conf, cur=confBPM(r,0,true,512).conf;
+      if(cur>old*0.99)t.bpm=r;
+    }
+  }
+  // 6. Close call between top two → second opinion at full resolution.
+  if(cands.length>=2&&cands[0].fitness/cands[1].fitness<1.05){
+    for(const t of cands)t.fitness=confBPM(t.bpm,0,true).conf;
+    cands.sort((a,b)=>b.fitness-a.fitness);
+  }
+  cands=cands.slice(0,3);
+  bpmCandidates=cands.map(c=>({bpm:Math.round(c.bpm*100)/100,score:c.fitness}));
+  let bestBpm=cands[0].bpm;
+  // ── Octave guard (kick spacing) ──
+  // With offbeat hats detected, a true 100 BPM song scores higher at 200
+  // (ALL onsets land on the 200-grid vs hats at half-weight on the 100-grid).
+  // AV resolves this by showing a human the top-3; we auto-pick, so check the
+  // KICK spacing: if strong-bass onsets land every ~2 beats of the chosen
+  // tempo, the tempo is doubled — halve it. The ≥95 floor keeps genuine
+  // half-time-kick stamina songs (e.g. 170 with kicks on every other beat)
+  // from being wrongly halved into the slow range.
+  {
+    const kicks=[];
+    for(let i=0;i<N;i++)if((onsetBass[i]||0)>0.5)kicks.push(onsetTimes[i]);
+    if(kicks.length>=8&&bestBpm/2>=95){
+      const gaps=[];
+      for(let i=1;i<kicks.length;i++){const g=kicks[i]-kicks[i-1];if(g>0.05&&g<2)gaps.push(g);}
+      if(gaps.length>=6){
+        gaps.sort((a,b)=>a-b);
+        const med=gaps[Math.floor(gaps.length/2)], p=60/bestBpm;
+        if(med>p*1.7&&med<p*2.3)bestBpm=bestBpm/2;
+      }
+    }
+  }
+
+  // ── OFFSET (AV CalculateOffset) ──
+  const beatSec=60/bestBpm, intervalf=sr*beatSec;
+  // base offset: best gap position at full resolution, unit strengths (AV)
+  const base=confBPM(bestBpm,0,false);
+  let offset=base.pos/sr;
+  // resolve beat vs offbeat with the waveform slope envelope
+  if(monoData&&monoData.length>sr){
+    const nFr=Math.min(monoData.length,Math.floor(sr*150));
+    const wh=Math.floor(sr/20);
+    if(nFr>wh*2){
+      const slopes=new Float32Array(nFr);
+      let sumL=0,sumR=0;
+      for(let i=0,j=wh;i<wh;i++,j++){sumL+=Math.abs(monoData[i]);sumR+=Math.abs(monoData[j]);}
+      const scal=1/wh;
+      for(let i=wh,end=nFr-wh;i<end;i++){
+        slopes[i]=Math.max(0,(sumR-sumL)*scal);
+        const cur=Math.abs(monoData[i]);
+        sumL-=Math.abs(monoData[i-wh]);sumL+=cur;
+        sumR-=cur;sumR+=Math.abs(monoData[i+wh]);
+      }
+      let offbeat=offset+beatSec*0.5;
+      if(offbeat>beatSec)offbeat-=beatSec;
+      let pA=offset*sr,pB=offbeat*sr,sA=0,sB=0;
+      for(;pA<nFr&&pB<nFr;pA+=intervalf,pB+=intervalf){
+        sA+=slopes[Math.floor(pA)];sB+=slopes[Math.floor(pB)];
+      }
+      if(sB>sA)offset=offbeat;
+      // Refine the phase against the slope envelope itself: onset timestamps
+      // run slightly late on soft real-world attacks (flux peaks after the
+      // rise), so search ±30ms for the offset maximizing total attack-slope
+      // support at offset+k·beat — anchoring to where amplitude rises, which
+      // is what the ear syncs to. No fixed constant; song-adaptive.
+      const whS=Math.floor(sr/40);
+      const sharp=new Float32Array(nFr);
+      {let sL=0,sR=0;
+       for(let i=0,j=whS;i<whS;i++,j++){sL+=Math.abs(monoData[i]);sR+=Math.abs(monoData[j]);}
+       const sc=1/whS;
+       for(let i=whS,end=nFr-whS;i<end;i++){
+         sharp[i]=Math.max(0,(sR-sL)*sc);
+         const cu=Math.abs(monoData[i]);
+         sL-=Math.abs(monoData[i-whS]);sL+=cu;
+         sR-=cu;sR+=Math.abs(monoData[i+whS]);
+       }}
+      let bestOff=offset,bestS=-1;
+      for(let d=-0.030;d<=0.030;d+=0.001){
+        let o=offset+d; if(o<0)o+=beatSec;
+        let sum=0;
+        for(let pp=o*sr;pp<nFr;pp+=intervalf)sum+=sharp[Math.floor(pp)];
+        if(sum>bestS){bestS=sum;bestOff=o;}
+      }
+      offset=bestOff;
+    }
+  }
+  // wrap to nearest beat: a whole-beat lead-in belongs in note rows, not #OFFSET
+  let ph=((offset%beatSec)+beatSec)%beatSec;
+  if(ph>beatSec/2)ph-=beatSec;
+  detectedOffset=ph;
+
+  const finalBpm=Math.abs(bestBpm-Math.round(bestBpm))<1e-9?Math.round(bestBpm):Math.round(bestBpm*100)/100;
+  log('Tempo fit: '+finalBpm+' BPM, offset '+(detectedOffset*1000).toFixed(1)+'ms','ok');
+  if(bpmCandidates.length>1)log('Other BPM candidates: '+bpmCandidates.slice(1).map(c=>c.bpm.toFixed(1)).join(', '),'');
+  log('Fit confidence: '+(cands[0].fitness).toFixed(1)+(cands.length>1?' (next: '+cands[1].fitness.toFixed(1)+')':''),'ok');
+  return finalBpm;
+}
+
 function computeEnergy(){
   const d=audioBuffer.getChannelData(0),sr=audioBuffer.sampleRate;
   const WS=Math.floor(sr*0.2),DS=16;
@@ -602,354 +1017,6 @@ function computeEnergy(){
   if(mx>0)for(let i=0;i<energyCurve.length;i++)energyCurve[i]/=mx;
 }
 
-// ── Onsets ────────────────────────────────────────────────────────
-// Uses the real frequency bands from computeSpectralFeatures. Spectral flux =
-// sum of positive band-energy increases between frames (a true onset detection
-// function). Bass band drives jump detection. Falls back to the old time-domain
-// method if spectral frames aren't available.
-function computeOnsets(){
-  const sens=+document.getElementById('onsetSens').value;
-  if(specFrames.length>2){
-    const nF=specFrames.length;
-    // Band weights: emphasize percussive bands (sub-bass, bass, high/hats) for
-    // onset detection. Mids weighted lower (sustained melody flux is noisier).
-    const WGT=[2.2,2.0,1.0,1.2,1.4];
-    const flux=new Float32Array(nF);
-    for(let f=1;f<nF;f++){
-      let s=0;
-      for(let b=0;b<NBANDS;b++){
-        const diff=specFrames[f][b]-specFrames[f-1][b];
-        if(diff>0)s+=diff*WGT[b];
-      }
-      flux[f]=s;
-    }
-    // adaptive peak-pick with local-mean threshold
-    let maxF=0;for(let i=0;i<nF;i++)if(flux[i]>maxF)maxF=flux[i];
-    const PWIN=Math.max(4,Math.round(0.1/specHopSec)); // ~100ms window
-    const MGAP=Math.max(1,Math.round(0.05/specHopSec)); // 50ms min gap
-    onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];let lastPk=-MGAP;
-    const BAND_CTR=[70,185,600,4000,9000];
-    // For ADAPTIVE MELODY SENSITIVITY we also compute a melody-weighted flux that
-    // emphasizes the mid bands (vocal/lead) instead of percussion. In frames
-    // where the BEAT is weak (low sub-bass/bass energy), we lower the detection
-    // threshold and lean on this melodic flux, so soft melody/vocal hits that the
-    // percussion-tuned detector would miss still register. Busy beat-driven
-    // frames are unaffected.
-    const MEL_WGT=[0.4,0.6,1.8,2.0,1.0]; // emphasize low-mid & mid (melody/harmony)
-    const melFlux=new Float32Array(nF);
-    for(let f=1;f<nF;f++){
-      let s=0;
-      for(let b=0;b<NBANDS;b++){const d=specFrames[f][b]-specFrames[f-1][b];if(d>0)s+=d*MEL_WGT[b];}
-      melFlux[f]=s;
-    }
-    let maxMel=0;for(let i=0;i<nF;i++)if(melFlux[i]>maxMel)maxMel=melFlux[i];
-    // typical bass level, to judge what counts as a "weak beat" frame
-    const bassLevels=[];for(let i=0;i<nF;i++)bassLevels.push((specFrames[i][0]+specFrames[i][1])*0.5);
-    const bassSorted=[...bassLevels].sort((a,b)=>a-b);
-    const bassMedian=bassSorted[Math.floor(bassSorted.length*0.5)]||0;
-    for(let i=1;i<nF-1;i++){
-      // Is the beat weak here? (bass below ~70% of the song's median bass)
-      const beatWeak = bassLevels[i] < bassMedian*0.7;
-      // Pick which flux + threshold to use. In weak-beat frames use the melodic
-      // flux with a LOWER threshold so soft melody hits get caught.
-      const useFlux = beatWeak ? melFlux : flux;
-      const useMax  = beatWeak ? maxMel : maxF;
-      const v=useFlux[i];
-      let sum=0,c=0;
-      for(let j=Math.max(0,i-PWIN);j<Math.min(nF,i+PWIN);j++){sum+=useFlux[j];c++;}
-      // weak-beat frames get a gentler threshold (×0.6) so melody registers
-      const thrScale = beatWeak ? 0.21 : 0.35;
-      const thr=(sum/c)+sens*useMax*thrScale;
-      if(v>thr&&v>=useFlux[i-1]&&v>useFlux[i+1]&&i-lastPk>=MGAP){
-        // LEADING-EDGE REFINEMENT: the flux PEAKS a few frames after the sound's
-        // attack actually begins (a kick takes ~10-30ms to rise to full level).
-        // The felt beat — and where ITGmania/ArrowVortex sync — is the ATTACK
-        // START, not the peak. So walk backward from the peak to where the flux
-        // began rising out of the local floor, and timestamp the onset THERE.
-        // This removes a systematic "late by the attack rise-time" bias.
-        let edge=i;
-        const floor=(sum/c); // local mean flux = the pre-attack floor
-        // step back while flux is still descending toward the floor (i.e. we're
-        // on the rising slope) and above the floor
-        while(edge>1 && useFlux[edge-1] < useFlux[edge] && useFlux[edge-1] > floor){
-          edge--;
-        }
-        // edge now sits at the first frame of the rise; that's the attack start
-        onsetTimes.push(specFrameTimes[edge]);
-        onsetStrengths.push(useMax?v/useMax:0);
-        onsetBass.push(Math.min(1,(specFrames[i][0]+specFrames[i][1])*0.5));
-        let num=0,den=0;
-        for(let b=0;b<NBANDS;b++){num+=specFrames[i][b]*BAND_CTR[b];den+=specFrames[i][b];}
-        onsetCentroid.push(den>0?num/den:0);
-        lastPk=i;
-      }
-    }
-    log('Onsets (spectral): '+onsetTimes.length,'ok');
-    return;
-  }
-  // ── Fallback: old time-domain method (no FFT available) ──
-  const sr=audioBuffer.sampleRate,d=audioBuffer.getChannelData(0);
-  const USE=Math.min(d.length,sr*120),HOP=1024,DS=8,BANDS=4;
-  const WGTS=[3.0,2.0,1.0,0.3];
-  const nHops=Math.floor((USE-HOP)/HOP);
-  const flux=new Float32Array(nHops),times=new Float32Array(nHops);
-  const bassEnv=new Float32Array(nHops);
-  const prev=new Float32Array(BANDS);
-  const rc=1/(2*Math.PI*150), dt=1/sr, alpha=dt/(rc+dt);
-  let lp=0;
-  for(let h=0;h<nHops;h++){
-    const base=h*HOP;times[h]=base/sr;
-    let bassRms=0,bcnt=0;
-    for(let b=0;b<BANDS;b++){
-      const s0=base+b*Math.floor(HOP/BANDS),s1=s0+Math.floor(HOP/BANDS);
-      let rms=0,cnt=0;
-      for(let i=s0;i<s1&&i<USE;i+=DS){rms+=d[i]*d[i];cnt++;}
-      const val=cnt?Math.sqrt(rms/cnt)*WGTS[b]:0;
-      const diff=val-prev[b];if(diff>0)flux[h]+=diff;prev[b]=val;
-    }
-    for(let i=base;i<base+HOP&&i<USE;i+=DS){lp+=alpha*(d[i]-lp);bassRms+=lp*lp;bcnt++;}
-    bassEnv[h]=bcnt?Math.sqrt(bassRms/bcnt):0;
-  }
-  let maxBass=0;for(let i=0;i<nHops;i++)if(bassEnv[i]>maxBass)maxBass=bassEnv[i];
-  const PWIN=10,MGAP=Math.max(1,Math.round(0.05*sr/HOP));
-  let maxF=0;for(let i=0;i<nHops;i++)if(flux[i]>maxF)maxF=flux[i];
-  onsetTimes=[];onsetStrengths=[];onsetBass=[];onsetCentroid=[];let lastHop=-MGAP;
-  for(let i=1;i<nHops-1;i++){
-    const v=flux[i];let sum=0;
-    for(let j=Math.max(0,i-PWIN);j<Math.min(nHops,i+PWIN);j++)sum+=flux[j];
-    const thr=(sum/(PWIN*2))+sens*maxF*0.4;
-    if(v>thr&&v>flux[i-1]&&v>flux[i+1]&&i-lastHop>=MGAP){
-      // leading-edge backtrack (see spectral path): mark the attack start, not
-      // the flux peak, so onset times aren't systematically late.
-      let edge=i; const floor=sum/(PWIN*2);
-      while(edge>1 && flux[edge-1] < flux[edge] && flux[edge-1] > floor){ edge--; }
-      onsetTimes.push(times[edge]);onsetStrengths.push(v/(maxF||1));
-      onsetBass.push(maxBass?bassEnv[i]/maxBass:0);
-      onsetCentroid.push(0); // no spectral info in fallback
-      lastHop=i;
-    }
-  }
-  log('Onsets (time-domain): '+onsetTimes.length,'ok');
-}
-
-// ── BPM + Offset — ArrowVortex-style joint fit ────────────────────
-// AV finds tempo and offset together: it sweeps candidate BPMs, and for
-// each one finds the phase (offset) where weighted onset energy best lands
-// on the beat grid. The (bpm, offset) pair with the highest alignment wins,
-// then both are refined at fine resolution. Returns BPM; stores offset in
-// detectedOffset and a candidate list in bpmCandidates.
-let bpmCandidates=[];
-function fitTempo(){
-  bpmCandidates=[];
-  if(!onsetTimes||onsetTimes.length<4){detectedOffset=0;return 120;}
-  // For performance, fit against a subset of onsets — but the subset must keep
-  // BOTH the strongest onsets AND the strongest BASS onsets. Selecting purely by
-  // strength can drop every kick on hat/snare-heavy songs (hats outrank kicks),
-  // which silently breaks the kick-anchored offset and the octave test.
-  let idx=onsetTimes.map((t,i)=>i);
-  if(idx.length>400){
-    const byStrength=[...idx].sort((a,b)=>(onsetStrengths[b]||0)-(onsetStrengths[a]||0)).slice(0,300);
-    const byBass=[...idx].sort((a,b)=>(onsetBass[b]||0)-(onsetBass[a]||0)).slice(0,200);
-    idx=[...new Set([...byStrength,...byBass])].sort((a,b)=>a-b);
-  }
-  const T=idx.map(i=>onsetTimes[i]);
-  const S=idx.map(i=>(onsetStrengths&&onsetStrengths[i])||1);
-  // Bass energy per onset — used to anchor the OFFSET (phase) to the kick/down-
-  // beat specifically, which is what a player feels, rather than the average of
-  // all onsets. BPM detection still uses strength (S); only the final phase uses
-  // this kick weighting.
-  const B=idx.map(i=>(onsetBass&&onsetBass[i]!=null)?onsetBass[i]:0);
-  const span=T[T.length-1]-T[0]||1;
-
-  // Weighted alignment score for a given period & phase.
-  // Each onset contributes strength * gaussian(distance to nearest grid line).
-  function align(period, phase){
-    let score=0, wsum=0;
-    const sigma=period*0.06; // ~6% of beat tolerance, like AV's tight snap
-    for(let i=0;i<T.length;i++){
-      const ph=((T[i]-phase)%period+period)%period;
-      const dist=Math.min(ph, period-ph);
-      score+=S[i]*Math.exp(-(dist*dist)/(2*sigma*sigma));
-      wsum+=S[i];
-    }
-    return wsum?score/wsum:0;
-  }
-  // Best phase for a period: scan 64 sub-positions, return {phase,score}.
-  function bestPhase(period){
-    let bestP=0,bestS=-1;
-    const STEPS=64;
-    for(let k=0;k<STEPS;k++){
-      const phase=k*period/STEPS;
-      const s=align(period,phase);
-      if(s>bestS){bestS=s;bestP=phase;}
-    }
-    return {phase:bestP,score:bestS};
-  }
-  // Kick-anchored alignment: same gaussian snap, but weight each onset by its
-  // BASS energy so the phase locks onto the kick/downbeat the player feels.
-  // Used ONLY for the final offset, after BPM is fixed. Falls back to strength
-  // where there's no bass (so a song with no clear kick still gets a phase).
-  function alignKick(period, phase){
-    let score=0, wsum=0;
-    const sigma=period*0.06;
-    for(let i=0;i<T.length;i++){
-      const w = B[i]>0.15 ? B[i]*B[i] : B[i]*0.05; // emphasize real kicks
-      if(w<=0) continue;
-      const ph=((T[i]-phase)%period+period)%period;
-      const dist=Math.min(ph, period-ph);
-      score+=w*Math.exp(-(dist*dist)/(2*sigma*sigma));
-      wsum+=w;
-    }
-    return wsum?score/wsum:0;
-  }
-  // COMB-FILTER phase alignment (Scheirer 1998, the method rhythm-game tools use
-  // and which benchmarks better than plain autocorrelation for phase). Instead
-  // of scoring onsets against a single grid line, it correlates them against a
-  // PULSE TRAIN: the beat, plus its metrical subdivisions (half, quarter beat)
-  // at decreasing weight. This reinforces the true beat and resists syncopation,
-  // where offbeat onsets otherwise pull a single-pulse aligner off-phase.
-  // Bass-weighted so it still anchors to the kick.
-  function alignComb(period, phase, useBass){
-    // metrical pulse train: beat (1.0), half-beat (0.5w), quarter-beat (0.25w)
-    const combs=[{div:1,w:1.0},{div:2,w:0.5},{div:4,w:0.25}];
-    let score=0, wsum=0;
-    const sigma=period*0.05;
-    for(let i=0;i<T.length;i++){
-      const w = useBass ? (B[i]>0.15?B[i]*B[i]:B[i]*0.05) : S[i];
-      if(w<=0) continue;
-      // best resonance across the pulse-train subdivisions
-      let best=0;
-      for(const c of combs){
-        const p=period/c.div;
-        const ph=((T[i]-phase)%p+p)%p;
-        const d=Math.min(ph, p-ph);
-        const sig=sigma/c.div;
-        const r=c.w*Math.exp(-(d*d)/(2*sig*sig));
-        if(r>best)best=r;
-      }
-      score+=w*best; wsum+=w;
-    }
-    return wsum?score/wsum:0;
-  }
-
-  // Coarse BPM sweep across the playable range (60–220), 0.5 BPM steps.
-  const results=[];
-  for(let bpm=60;bpm<=220;bpm+=0.5){
-    const period=60/bpm;
-    if(span/period<4) continue; // need several beats of evidence
-    const {phase,score}=bestPhase(period);
-    results.push({bpm,period,phase,score});
-  }
-  if(!results.length){detectedOffset=0;return 120;}
-
-  // Octave normalization: fold each result into 80–185 and keep the strongest
-  // representative per rounded-BPM bucket. AV reports a few distinct options.
-  results.sort((a,b)=>b.score-a.score);
-  const seen=new Map();
-  for(const r of results){
-    let bpm=r.bpm;
-    while(bpm<80)bpm*=2; while(bpm>185)bpm/=2;
-    // stamina prior nudges toward the 120–175 zone
-    const prior=(bpm>=120&&bpm<=175)?1.12:(bpm>=95&&bpm<=185?1.0:0.85);
-    const adjScore=r.score*prior;
-    const key=Math.round(bpm);
-    if(!seen.has(key)||seen.get(key).adjScore<adjScore)
-      seen.set(key,{bpm,period:60/bpm,phase:r.phase,score:r.score,adjScore});
-  }
-  let cands=[...seen.values()].sort((a,b)=>b.adjScore-a.adjScore).slice(0,5);
-
-  // Refine the top candidate: fine BPM search (±1 BPM, 0.02 steps) with
-  // re-fitted phase, then fine offset polish.
-  const best=cands[0];
-  let refBpm=best.bpm,refScore=best.score,refPhase=best.phase;
-  for(let bpm=best.bpm-1;bpm<=best.bpm+1;bpm+=0.02){
-    if(bpm<60||bpm>220)continue;
-    const period=60/bpm;
-    const {phase,score}=bestPhase(period);
-    if(score>refScore){refScore=score;refBpm=bpm;refPhase=phase;}
-  }
-  // ── OCTAVE CORRECTION (kick-spacing test) ──
-  // The fold above caps at 185, so a true 186–220 BPM song gets HALVED (200→100)
-  // and the whole chart generates at half-time. The reliable discriminator is
-  // the KICK spacing: if the strong-bass onsets land at ~half the chosen beat
-  // period, the tempo was folded down — double it back (within the 220 sweep cap).
-  {
-    const kicks=T.filter((t,i)=>B[i]>0.4);
-    if(kicks.length>=8 && refBpm*2<=220){
-      const gaps=[];
-      for(let i=1;i<kicks.length;i++){const g=kicks[i]-kicks[i-1]; if(g>0.05&&g<2) gaps.push(g);}
-      if(gaps.length>=6){
-        gaps.sort((a,b)=>a-b);
-        const medGap=gaps[Math.floor(gaps.length/2)];
-        const period0=60/refBpm;
-        // kicks predominantly at half the beat → tempo is folded; unfold it
-        if(medGap < period0*0.65){
-          refBpm*=2;
-          const p2=60/refBpm;
-          const bp=bestPhase(p2);
-          refPhase=bp.phase; refScore=bp.score;
-        }
-      }
-    }
-  }
-  // ── COMB-FILTER KICK-ANCHORED OFFSET ──
-  // BPM and a rough phase are locked. Now find the OFFSET the player feels using
-  // COMB-FILTER alignment (pulse train at the beat + metrical subdivisions),
-  // bass-weighted so it anchors to the kick. The comb is more robust to
-  // syncopation than the old single-pulse aligner — offbeat onsets resonate with
-  // the sub-beat combs instead of dragging the main beat off-phase.
-  const period=60/refBpm;
-  const bassTotal=B.reduce((a,b)=>a+b,0);
-  const useBass = bassTotal >= 0.5; // if there's a real kick, anchor to it
-  let polishPhase=refPhase,polishScore=alignComb(period,refPhase,useBass);
-  // coarse full-beat scan
-  const KSTEPS=128;
-  for(let k=0;k<KSTEPS;k++){
-    const off=k*period/KSTEPS;
-    const s=alignComb(period,off,useBass);
-    if(s>polishScore){polishScore=s;polishPhase=off;}
-  }
-  // fine ~1ms polish around the best phase
-  for(let off=polishPhase-period*0.05;off<=polishPhase+period*0.05;off+=0.001){
-    const s=alignComb(period,off,useBass);
-    if(s>polishScore){polishScore=s;polishPhase=off;}
-  }
-  // Wrap the phase to the NEAREST beat. A song with a built-in lead-in (e.g.
-  // ~0.4s ≈ a whole beat at 140 BPM) would otherwise land near a full beat and
-  // bake that lead-in into #OFFSET. Wrapping by a WHOLE beat is safe — the beat
-  // grid is periodic, so grid lines (and thus note positions) don't move; only
-  // the label of "beat 0" changes. The result is the small ±ms remainder real
-  // charts use (A Long Fall +9ms, JENOVA −1ms), with the lead-in handled by the
-  // empty rows before the first note rather than by the offset.
-  let phase=((polishPhase%period)+period)%period;
-  if(phase>period/2) phase-=period;   // → [-period/2, +period/2], nearest beat
-  detectedOffset=phase;
-
-  // Round BPM nicely if very close to an integer.
-  const r=Math.round(refBpm);
-  const finalBpm=Math.abs(refBpm-r)<0.04?r:Math.round(refBpm*100)/100;
-  // If rounding changed the BPM, re-polish the phase at the FINAL period so the
-  // offset is optimal for the grid we actually export (a phase tuned for
-  // 147.97 BPM is slightly off for a 148 grid).
-  if(finalBpm!==refBpm){
-    const fp=60/finalBpm;
-    let bestS=alignComb(fp,polishPhase,useBass), bestP=polishPhase;
-    for(let off=polishPhase-fp*0.06;off<=polishPhase+fp*0.06;off+=0.001){
-      const s=alignComb(fp,off,useBass);
-      if(s>bestS){bestS=s;bestP=off;}
-    }
-    polishPhase=bestP; polishScore=bestS;
-    let ph=((polishPhase%fp)+fp)%fp;
-    if(ph>fp/2) ph-=fp;
-    detectedOffset=ph;
-  }
-
-  bpmCandidates=cands.map(c=>({bpm:Math.round(c.bpm*100)/100,score:c.adjScore}));
-  log('Tempo fit: '+finalBpm+' BPM, offset '+(detectedOffset*1000).toFixed(1)+'ms','ok');
-  if(cands.length>1) log('Other BPM candidates: '+cands.slice(1).map(c=>c.bpm.toFixed(1)).join(', '),'');
-  log('Fit confidence: '+polishScore.toFixed(3),'ok');
-  return finalBpm;
-}
 
 // Back-compat wrappers
 function detectBPM(){return fitTempo();}
@@ -1139,7 +1206,7 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   // Choose a panel for the given foot. A foot freely uses its home outer arrow
   // and BOTH center arrows (natural pivoting/facing). The opposite outer arrow
   // is a real crossover and is rare.
-  function choosePanel(candidates,foot,contourBias){
+  function choosePanel(candidates,foot,contourBias,drillMult=1){
     if(candidates.length===1){
       const p=candidates[0];
       recentTransitions.push(lastPanel+'>'+p); if(recentTransitions.length>6)recentTransitions.shift();
@@ -1157,9 +1224,16 @@ function generateChart(block,bpm,energy,duration,manualRegions){
       if(p===2) contour=(contourBias||0)*3.2;        // Up rewarded by rising melody
       else if(p===1) contour=-(contourBias||0)*3.2;  // Down rewarded by falling melody
       const cyclePen=(transCount[p]||0)*1.2;
-      const drillPen=drillPenalty(p);
+      // Drill penalty is applied MULTIPLICATIVELY after the additive floor.
+      // (Applying it additively inside the floor let a large penalty push ALL
+      // candidates onto the 0.05 floor in streams, erasing the relative
+      // difference and making the pick a coin flip — which INCREASED drills.)
+      // drillMult doubles the effect at stream spacing, where A-B-A-B is a
+      // real physical drill; sparse placements keep the base rate.
+      const drillPen=drillPenalty(p)*drillMult;
       const rand=Math.random()*(2.2-contourMag*1.2);
-      return Math.max(0.05, balance - facePen + contour - cyclePen - drillPen + rand);
+      const base=Math.max(0.05, balance - facePen + contour - cyclePen + rand);
+      return base/(1+drillPen);
     });
     let total=weights.reduce((a,b)=>a+b,0), r=Math.random()*total, chosen=candidates[candidates.length-1];
     for(let i=0;i<candidates.length;i++){r-=weights[i];if(r<=0){chosen=candidates[i];break;}}
@@ -1183,12 +1257,19 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     if(!crossoversAllowed) p=p.filter(x=>!isCrossover(x,foot));
     return p;
   }
+  let lastStepRow=-99;
   function placeStep(row,contourBias){
     if(row<0||row>=totalRows||notes[row]!==-1)return;
     const foot=(lastFoot==='L')?'R':'L';
     let ch=reachablePanels(foot).filter(p=>p!==lastPanel);
     if(!ch.length)ch=reachablePanels(foot);
-    commit(row,choosePanel(ch,foot,contourBias),foot);
+    // Stream spacing (≤2 rows = 8th or faster since the previous step) makes an
+    // A-B-A-B oscillation a real physical drill → double the anti-drill penalty
+    // there. Sparse placements keep the base rate (slow ABAB isn't a drill).
+    const gap=row-lastStepRow;
+    const drillMult=(gap>0&&gap<=2)?2.0:1.0;
+    commit(row,choosePanel(ch,foot,contourBias,drillMult),foot);
+    lastStepRow=row;
   }
   function placeHold(headRow,len,contourBias){
     if(headRow<0||headRow>=totalRows||notes[headRow]!==-1)return;
@@ -1226,6 +1307,7 @@ function generateChart(block,bpm,energy,duration,manualRegions){
       const gap=(i+1<onsetTimes.length?onsetTimes[i+1]-onsetTimes[i]:beatDur*2);
       events.push({
         row,
+        t, // precise (grid-anchored) time — used for fine 24th/32nd quantization
         strength:onsetStrengths[i]||0,
         bass:onsetBass[i]||0,
         centroid:onsetCentroid[i]||0,
@@ -1520,6 +1602,15 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     quietThresh=allStr.length?allStr[Math.floor(allStr.length*0.22)]:0; // bottom 22%
   }
   let placed=0, lastJumpRow=-99;
+  // Fine melody timing: a melody onset rarely sits exactly on a 16th — real
+  // lines hit quarters, 24ths (triplets), 32nds. When enabled, each sparse
+  // melody TAP records its sub-row shift (in 96ths-per-measure units, ±2
+  // around its 16th row, snapped to valid 24th/32nd positions). Streams,
+  // holds, jumps and manual regions stay pure 16ths; the shift is applied at
+  // export only where neighbors are empty, so dense passages never wobble.
+  const fineQuant=document.getElementById('fineQuant')?.checked ?? false;
+  const fine=new Int8Array(totalRows);
+  const fineUnit=rowDur/6; // 6 units per 16th row = 24 per beat = 96 per measure
   for(let k=0;k<kept.length;k++){
     const {row,e,i}=kept[k];
     if(notes[row]!==-1) continue;
@@ -1549,21 +1640,33 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     }
     else{
       placeStep(row,cb);
+      if(fineQuant && !e.filler && !kept[k].manual && e.t!==undefined && notes[row]!==-1){
+        let pos=Math.round(e.t/fineUnit);
+        if(pos%3!==0 && pos%4!==0){ // snap to nearest valid 24th/32nd position
+          for(const d of [1,-1,2,-2]){ const p2=pos+d; if(p2%3===0||p2%4===0){pos=p2;break;} }
+        }
+        let shift=pos-row*6;
+        // ±5 units: onsetSnap may have placed the row a full 16th from the true
+        // position (e.g. a 24th snapped to the beat). The fine shift restores
+        // the TRUE time; beyond ±5 the row itself is too far — trust the grid.
+        if(shift>5||shift<-5) shift=0;
+        fine[row]=shift;
+      }
     }
     placed++;
   }
 
-  return {notes,rpb:RPB,jumpRows};
+  return {notes,rpb:RPB,jumpRows,fine};
 }
 
 // ── SM serialization ──────────────────────────────────────────────
-function notesToSM(notes,jumpRows){
+function notesToSM(notes,jumpRows,fine){
   const rpm=16,measures=[],jr=jumpRows||{};
   for(let i=0;i<notes.length;i+=rpm){
     const m=[];for(let k=0;k<rpm;k++)m.push({n:notes[i+k]!==undefined?notes[i+k]:-1,row:i+k});
     measures.push(m);
   }
-  return measures.map(m=>m.map(cell=>{
+  const cellStr=(cell)=>{
     const n=cell.n,r=['0','0','0','0'];
     if(n>=0&&n<=3)r[n]='1';
     if(n>=10&&n<=13)r[n-10]='2';
@@ -1573,7 +1676,33 @@ function notesToSM(notes,jumpRows){
     const j=jr[cell.row];
     if(j){if(r[j[0]]==='0')r[j[0]]='1';if(r[j[1]]==='0')r[j[1]]='1';}
     return r.join('');
-  }).join('\n')).join('\n,\n');
+  };
+  // A shift is only EFFECTIVE for a plain tap whose neighbor rows are empty
+  // (sparse melody). Dense passages (streams) keep straight 16ths.
+  const effShift=(cell)=>{
+    if(!fine||!fine[cell.row])return 0;
+    if(!(cell.n>=0&&cell.n<=3))return 0;         // taps only (not holds)
+    if(jr[cell.row])return 0;                     // jumps stay on the grid
+    const prev=cell.row>0?notes[cell.row-1]:-1;
+    const next=cell.row+1<notes.length?notes[cell.row+1]:-1;
+    if(prev!==-1||next!==-1)return 0;
+    return fine[cell.row];
+  };
+  return measures.map(m=>{
+    const shifts=m.map(effShift);
+    if(shifts.every(x=>x===0)){
+      return m.map(cellStr).join('\n');          // plain 16-line measure
+    }
+    // 96-line measure: place each 16th cell at line k*6 + shift
+    const lines=new Array(96).fill('0000');
+    m.forEach((cell,k)=>{
+      if(cell.n===-1&&!jr[cell.row])return;
+      let li=k*6+shifts[k];
+      if(li<0||li>95)li=k*6; // measure-boundary guard
+      lines[li]=cellStr(cell);
+    });
+    return lines.join('\n');
+  }).join('\n,\n');
 }
 
 function buildSM(title,artist,bpm,offset,charts,ext,safe){
@@ -1586,7 +1715,21 @@ function buildSM(title,artist,bpm,offset,charts,ext,safe){
   // note data, NOT in the offset. We anchor notes to the same phase, so the
   // offset is simply: detected beat phase + 9ms bias + user fine-tune.
   const hdr=`#TITLE:${title};\n#SUBTITLE:;\n#ARTIST:${artist};\n#TITLETRANSLIT:;\n#SUBTITLETRANSLIT:;\n#ARTISTTRANSLIT:;\n#GENRE:;\n#CREDIT:ITG StepGen;\n#BANNER:${safe}-banner.png;\n#BACKGROUND:${safe}-bg.png;\n#CDTITLE:;\n#MUSIC:${safe}.${ext};\n#OFFSET:${offset.toFixed(6)};\n#SAMPLESTART:12.000;\n#SAMPLELENGTH:13.000;\n#SELECTABLE:YES;\n#BPMS:0.000=${bpm.toFixed(3)};\n#STOPS:;\n\n`;
-  const cblocks=charts.map((c,i)=>{const name=diffNames[Math.min(base+i,4)];return`#NOTES:\n     dance-single:\n     ITG StepGen:\n     ${name}:\n     ${c.block}:\n     0.000,0.000,0.000,0.000,0.000:\n${notesToSM(c.notes,c.jumpRows)}\n;`;}).join('\n\n');
+  const cblocks=charts.map((c,i)=>{const name=diffNames[Math.min(base+i,4)];return`#NOTES:\n     dance-single:\n     ITG StepGen:\n     ${name}:\n     ${c.block}:\n     0.000,0.000,0.000,0.000,0.000:\n${notesToSM(c.notes,c.jumpRows,c.fine)}\n;`;}).join('\n\n');
+  return hdr+cblocks;
+}
+
+// SSC (modern StepMania/ITGmania format): same timing convention as the .sm,
+// but per-chart #NOTEDATA blocks. Both files ship in the ZIP; ITGmania
+// prefers the .ssc when both are present.
+function buildSSC(title,artist,bpm,offset,charts,ext,safe){
+  const diffNames=['Beginner','Easy','Medium','Hard','Challenge'];
+  const base=4-charts.length;
+  const hdr=`#VERSION:0.83;\n#TITLE:${title};\n#SUBTITLE:;\n#ARTIST:${artist};\n#TITLETRANSLIT:;\n#SUBTITLETRANSLIT:;\n#ARTISTTRANSLIT:;\n#GENRE:;\n#CREDIT:ITG StepGen;\n#BANNER:${safe}-banner.png;\n#BACKGROUND:${safe}-bg.png;\n#CDTITLE:;\n#MUSIC:${safe}.${ext};\n#OFFSET:${offset.toFixed(6)};\n#SAMPLESTART:12.000;\n#SAMPLELENGTH:13.000;\n#SELECTABLE:YES;\n#BPMS:0.000000=${bpm.toFixed(6)};\n#STOPS:;\n\n`;
+  const cblocks=charts.map((c,i)=>{
+    const name=diffNames[Math.min(base+i,4)];
+    return`//---------------dance-single - ----------------\n#NOTEDATA:;\n#STEPSTYPE:dance-single;\n#DESCRIPTION:ITG StepGen;\n#DIFFICULTY:${name};\n#METER:${c.block};\n#RADARVALUES:0,0,0,0,0;\n#NOTES:\n${notesToSM(c.notes,c.jumpRows,c.fine)}\n;`;
+  }).join('\n\n');
   return hdr+cblocks;
 }
 
@@ -1978,6 +2121,188 @@ async function makeImg(title,artist,w,h,artImg){
   return new Promise(res=>cv.toBlob(res,'image/png'));
 }
 
+
+// ═══ REMIX / RE-STEP: keep an existing chart's timing & rhythm exactly, ═══
+// re-choose every panel with the pattern engine. Only note bodies change —
+// headers, BPM changes, stops, warps, offsets all pass through byte-intact.
+function restepFile(text,regions){
+  let out='', pos=0, charts=0, skipped=0;
+  const stats={taps:0,jumps:0,holds:0,mines:0,same:0,cross:0,seq:0};
+  while(true){
+    const ni=text.indexOf('#NOTES:',pos);
+    if(ni<0){out+=text.slice(pos);break;}
+    const term=text.indexOf(';',ni);
+    if(term<0){out+=text.slice(pos);break;}
+    out+=text.slice(pos,ni);
+    const chunk=text.slice(ni,term);
+    const res=restepChunk(chunk,stats,regions);
+    if(res===null){out+=chunk;skipped++;}
+    else{out+=res;charts++;}
+    out+=';';
+    pos=term+1;
+  }
+  return {text:out,charts,skipped,stats};
+}
+function restepChunk(chunk,stats,regions){
+  // painted timeline regions (measure ranges) become generated streams:
+  // s16 = note every 16th, s8 = every 8th — panels via the same chooser.
+  const regionOf=(m)=>{if(!regions)return null;for(const r of regions){if(m>=r.startMeas&&m<=r.endMeas)return r.type;}return null;};
+  const lines=chunk.split('\n');
+  // note lines are exactly-4-char rows; anything else (metadata, separators,
+  // comments, blank) passes through untouched, preserving structure.
+  const isNote=(l)=>/^[0-9A-Z]{4}$/.test(l.trim());
+  // dance-single only: any wider row → leave chart untouched
+  for(const l of lines){const t=l.trim();if(/^[0-9A-Z]{5,}$/.test(t))return null;}
+  if(!lines.some(l=>isNote(l)))return null;
+  // pre-scan measures for beat positions (drill spacing needs note gaps)
+  const noteIdx=[];let measure=0,inMeasure=[];
+  const measureOf=[],lineInM=[],mSize=[];
+  {let mLines=[];const mStarts=[];
+   lines.forEach((l,i)=>{const t=l.trim();
+     if(isNote(l)){mLines.push(i);}
+     else if(t[0]===','){mSize.push(mLines.length);mLines.forEach((li,k)=>{measureOf[li]=mSize.length-1;lineInM[li]=k;});mLines=[];} // separator may carry a comment
+   });
+   if(mLines.length){mSize.push(mLines.length);mLines.forEach((li,k)=>{measureOf[li]=mSize.length-1;lineInM[li]=k;});}
+  }
+  // ── chooser state (mirrors the generator's rules & weights) ──
+  const crossoversAllowed=[...activePats].some(n=>PATTERNS[n]&&PATTERNS[n].cat==='crossover');
+  const isCross=(p,f)=>(f==='R'&&p===0)||(f==='L'&&p===3);
+  let lastFoot='R',lastPanel=-1;
+  const panelUse=[0,0,0,0];
+  let recentNotes=[],recentTrans=[];
+  const drillPen=(a)=>{
+    const n=recentNotes,L=n.length;if(L<1)return 0;
+    const b=n[L-1];if(a===b)return 0;
+    let reps=0,expect=b;
+    for(let i=L-1;i>=0;i--){if(n[i]===expect){reps++;expect=(expect===a?b:a);}else break;}
+    if(reps>=5)return 7.0; if(reps>=3)return 1.6; if(reps>=1)return 0.5; return 0;
+  };
+  const commit=(p,foot)=>{
+    if(foot===lastFoot)stats.same++;
+    if(isCross(p,foot))stats.cross++;
+    stats.seq++;
+    recentTrans.push(lastPanel+'>'+p);if(recentTrans.length>6)recentTrans.shift();
+    recentNotes.push(p);if(recentNotes.length>8)recentNotes.shift();
+    lastFoot=foot;lastPanel=p;panelUse[p]++;
+  };
+  const choose=(cands,foot,drillMult)=>{
+    if(!cands.length)return -1;
+    if(cands.length===1){return cands[0];}
+    const maxUse=Math.max(...cands.map(p=>panelUse[p]),1);
+    const tc={};for(const t of recentTrans){const tp=+t.split('>')[1];tc[tp]=(tc[tp]||0)+1;}
+    const w=cands.map(p=>{
+      const balance=(maxUse-panelUse[p]+1)*0.7;
+      const face=isCross(p,foot)?(crossoversAllowed?3.0:6.0):0;
+      const cyc=(tc[p]||0)*1.2;
+      const base=Math.max(0.05,balance-face-cyc+Math.random()*2.2);
+      return base/(1+drillPen(p)*drillMult);
+    });
+    let tot=w.reduce((a,b)=>a+b,0),r=Math.random()*tot;
+    for(let i=0;i<cands.length;i++){r-=w[i];if(r<=0)return cands[i];}
+    return cands[cands.length-1];
+  };
+  const reach=(foot)=>{let p=[0,1,2,3];if(!crossoversAllowed)p=p.filter(x=>!isCross(x,foot));return p;};
+  // holds: original column → {col:newColumn, foot}
+  const open={};
+  const heldCols=()=>Object.values(open).map(o=>o.col);
+  let lastBeat=-99;
+  const out=[];
+  // Painted-region stream synthesis: a painted measure's original note lines
+  // are wholly REPLACED by a freshly generated 16-line stream block (so even a
+  // 4-line quarter-note measure expands to full 16th resolution). Any hold
+  // still open entering the region is closed cleanly on line 0; original
+  // heads discarded inside the region simply drop their later tails.
+  const streamedM=new Set();
+  const emitStreamMeasure=(m,paintType,indent)=>{
+    const step=paintType==='s16'?1:2;
+    for(let g=0;g<16;g++){
+      const res=['0','0','0','0'];
+      if(g===0){for(const c of Object.keys(open)){res[open[c].col]='3';delete open[c];}}
+      if(g%step===0){
+        const foot=(lastFoot==='L')?'R':'L';
+        let cands=reach(foot).filter(p=>p!==lastPanel&&res[p]==='0');
+        if(!cands.length)cands=reach(foot).filter(p=>res[p]==='0');
+        const p=choose(cands,foot,2.0);
+        if(p>=0){res[p]='1';commit(p,foot);stats.taps++;stats.streamed=(stats.streamed||0)+1;}
+        lastBeat=m*4+g*0.25;
+      }
+      out.push(indent+res.join(''));
+    }
+  };
+  lines.forEach((l,li)=>{
+    if(!isNote(l)){out.push(l);return;}
+    const mIdx=measureOf[li];
+    const paintType=regionOf(mIdx);
+    if(paintType==='s16'||paintType==='s8'){
+      if(!streamedM.has(mIdx)){
+        streamedM.add(mIdx);
+        emitStreamMeasure(mIdx,paintType,(l.match(/^\s*/)||[''])[0]);
+      }
+      return; // original note lines of a painted measure are dropped
+    }
+    const ch=l.trim().split('');
+    const m=measureOf[li],k=lineInM[li],L=mSize[m]||16;
+    const beatPos=m*4+k*4/L;
+    const res=['0','0','0','0'];
+    // 1. tails first: land on the column their hold opened on
+    for(let c=0;c<4;c++){
+      if(ch[c]==='3'){
+        if(open[c]!==undefined){res[open[c].col]='3';delete open[c];}
+      }
+    }
+    const held=heldCols();
+    // 2. arrows (taps + hold/roll heads)
+    const arrows=[];for(let c=0;c<4;c++)if(ch[c]==='1'||ch[c]==='2'||ch[c]==='4')arrows.push(c);
+    const gap=beatPos-lastBeat;
+    const dm=(gap>0&&gap<=0.55)?2.0:1.0;
+    const freeCols=(list)=>list.filter(p=>!held.includes(p)&&res[p]==='0');
+    if(arrows.length===1){
+      const c=arrows[0];
+      let foot=(lastFoot==='L')?'R':'L';
+      // during a single open hold, the planted foot can't step
+      const holdFeet=Object.values(open).map(o=>o.foot);
+      if(holdFeet.length===1)foot=holdFeet[0]==='L'?'R':'L';
+      let cands=freeCols(reach(foot).filter(p=>p!==lastPanel));
+      if(!cands.length)cands=freeCols(reach(foot));
+      if(!cands.length)cands=freeCols([0,1,2,3]);
+      const p=choose(cands,foot,dm);
+      if(p>=0){res[p]=ch[c];commit(p,foot);stats.taps++;
+        if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot};stats.holds++;}}
+    }else if(arrows.length===2){
+      // jump: left foot from {0,1}, right foot from {2,3} (mirrors placeJump)
+      let lp=choose(freeCols([0,1]),'L',1),rp=choose(freeCols([2,3]),'R',1);
+      if(lp<0)lp=freeCols([0,1,2,3])[0]??-1;
+      if(rp<0)rp=freeCols([0,1,2,3].filter(p=>p!==lp))[0]??-1;
+      const dst=[lp,rp].filter(p=>p>=0).sort((a,b)=>a-b);
+      const src=arrows.slice().sort((a,b)=>a-b);
+      src.forEach((c,i)=>{
+        if(i<dst.length){const p=dst[i];res[p]=ch[c];panelUse[p]++;
+          if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot:p<=1?'L':'R'};stats.holds++;}}
+      });
+      if(dst.length===2){recentNotes=[];lastPanel=dst[1];stats.jumps++;}
+    }else if(arrows.length>2){
+      // hands: keep on free columns, original order
+      const free=freeCols([0,1,2,3]);
+      arrows.forEach((c,i)=>{if(i<free.length){res[free[i]]=ch[c];
+        if(ch[c]==='2'||ch[c]==='4')open[c]={col:free[i],foot:free[i]<=1?'L':'R'};}});
+    }
+    if(arrows.length)lastBeat=beatPos;
+    // 3. mines: same column if free, else nearest free, else dropped
+    for(let c=0;c<4;c++){
+      if(ch[c]==='M'){
+        let mc=res[c]==='0'&&!held.includes(c)?c:[0,1,2,3].find(p=>res[p]==='0'&&!held.includes(p));
+        if(mc!==undefined){res[mc]='M';stats.mines++;}
+      }
+    }
+    // 4. any exotic chars (lifts/fakes): keep at original column if free
+    for(let c=0;c<4;c++){
+      if(!'01234M'.includes(ch[c])&&res[c]==='0'&&!held.includes(c))res[c]=ch[c];
+    }
+    out.push(l.replace(l.trim(),res.join('')));
+  });
+  return out.join('\n');
+}
+
 // ── PREVIEW button ────────────────────────────────────────────────
 // ── Manual timeline event wiring ──
 (function wireManual(){
@@ -2132,6 +2457,33 @@ function applyManualPaint(a,b,mode){
   updateManualReadout();
 }
 
+
+// ── Remix / re-step wiring ──
+document.getElementById('restepBtn')?.addEventListener('click',()=>document.getElementById('restepInput').click());
+document.getElementById('restepInput')?.addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const regions=(manualEnabled&&manualRegionsByDiff[manualActiveDiff]&&manualRegionsByDiff[manualActiveDiff].length)?manualRegionsByDiff[manualActiveDiff]:null;
+      const {text,charts,skipped,stats}=restepFile(rd.result,regions);
+      if(!charts){log('Re-step: no dance-single charts found in that file','err');return;}
+      const ext=f.name.toLowerCase().endsWith('.ssc')?'ssc':'sm';
+      const base=f.name.replace(/\.(sm|ssc)$/i,'');
+      const blob=new Blob([text],{type:'text/plain'});
+      const a=document.createElement('a');
+      a.href=URL.createObjectURL(blob);a.download=base+'_restep.'+ext;a.click();
+      URL.revokeObjectURL(a.href);
+      const alt=stats.seq?Math.round(100-stats.same/stats.seq*100):100;
+      log('Re-stepped '+charts+' chart(s)'+(skipped?' ('+skipped+' non-single skipped)':'')+' — '+stats.taps+' taps, '+stats.jumps+' jumps, '+stats.holds+' holds, foot-alt '+alt+'%, crossovers '+stats.cross,'ok');
+      if(stats.streamed)log('Painted regions: '+stats.streamed+' stream notes injected from the timeline','ok');
+      else if(regions)log('Note: manual regions were set but matched no measures in this file','warn');
+    }catch(err){log('Re-step failed: '+err.message,'err');}
+  };
+  rd.readAsText(f);
+  e.target.value='';
+});
+
 document.getElementById('genBtn').addEventListener('click',async()=>{
   if(!audioBuffer){log('No audio loaded!','err');return;}
   const btn=document.getElementById('genBtn');btn.disabled=true;btn.textContent='⏳ Generating...';
@@ -2150,11 +2502,11 @@ document.getElementById('genBtn').addEventListener('click',async()=>{
       // auto-copy inheritance). diffs are ordered easy→hard, mapping to slots
       // 0,1,2. If fewer than 3 difficulties, map by index.
       const manualR = manualEnabled ? manualRegionsForSlot(di, diffs.length) : null;
-      const {notes,rpb}=generateChart(block,bpm,energyCurve,audioBuffer.duration, manualR);
+      const {notes,rpb,jumpRows,fine}=generateChart(block,bpm,energyCurve,audioBuffer.duration, manualR);
       await tick();
       const nc=notes.filter(n=>n>=0&&n<=3).length;
       log('  Block '+block+': '+nc+' notes','ok');
-      charts.push({block,notes,rpb});
+      charts.push({block,notes,rpb,jumpRows,fine});
     }
     drawDensityChart(charts,audioBuffer.duration,bpm);
     const useAutoOff=document.getElementById('ruleAutoOffset').checked;
@@ -2227,6 +2579,7 @@ document.getElementById('dlBtn').addEventListener('click',async()=>{
     log('Packing ZIP...');await tick();
     const zip=new JSZip();const folder=zip.folder(safe);
     folder.file(`${safe}.sm`,smText);
+    folder.file(`${safe}.ssc`,buildSSC(title,artist,bpm,offset,exportCharts,ext,safe));
     folder.file(`${safe}-banner.png`,bannerBlob);
     folder.file(`${safe}-bg.png`,bgBlob);
     folder.file(`${safe}-jacket.png`,jacketBlob);
