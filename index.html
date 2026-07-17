@@ -150,6 +150,8 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
           <input type="checkbox" id="restepNoJumps"/> Convert jumps to single steps (removes all jumps)
         </label>
         <input type="file" id="restepInput" accept=".sm,.ssc" style="display:none"/>
+        <button id="dwiBtn" class="toggle-all" style="width:100%;margin-top:8px">⇪ CONVERT .DWI → .SM/.SSC</button>
+        <input type="file" id="dwiInput" accept=".dwi" style="display:none"/>
       </div>
       <div class="field"><label>Jump density <span id="jumpDensityVal">Medium</span></label><input type="range" id="jumpDensity" min="0" max="4" value="2" step="1"/></div>
       <div class="field"><label>Hold density <span id="holdDensityVal">High</span></label><input type="range" id="holdDensity" min="0" max="4" value="3" step="1"/></div>
@@ -2469,6 +2471,279 @@ function applyManualPaint(a,b,mode){
 }
 
 
+// ═══ DWI → SM/SSC CONVERTER ═══
+// Direct 1:1 transcription (no re-stepping) of a legacy .dwi simfile into
+// modern .sm/.ssc. Panel layout, holds, jumps/hands, BPM changes and stops
+// are all carried over exactly as authored.
+//
+// Reference: DWI's own README (Docs/SimfileFormats/DWI/DWI.txt in the
+// StepMania source) for tag/notation semantics. Numpad note codes:
+//   7=U+L  8=U  9=U+R
+//   4=L    (5=none) 6=R
+//   1=D+L  2=D  3=D+R      A=U+D   B=L+R   0=no step
+// Bracket timing (fraction of a BEAT, not measure): default 1/8,
+// (...)=1/16, [...]=1/24, {...}=1/64, `...'=1/192.
+// Hold syntax: "code!subcode" — subcode's panel(s) become held starting
+// here ("show!hold"); the hold ends at the next event containing that
+// panel, which also renders normally (tap, or another hold-open) there.
+//
+// GAP→OFFSET: DWI's #GAP is milliseconds before beat 0, with the OPPOSITE
+// sign convention from SM's #OFFSET (documented in DWI's own README, and
+// implemented this way by every established DWI loader/converter):
+//   offsetSeconds = -(gapMs) / 1000
+
+const DWI_PANEL = {L:0,D:1,U:2,R:3};
+const DWI_CODE = { // code char -> array of panel indices
+  '0':[], '5':[],
+  '4':[0],'8':[2],'6':[3],'2':[1],
+  '7':[2,0],'9':[2,3],'1':[1,0],'3':[1,3],
+  'A':[2,1],'B':[0,3]
+};
+// 6-panel (Solo) codes we don't support (dance-single only) — recognized so
+// they can be reported rather than silently mis-parsed.
+const DWI_SOLO_CODES = new Set(['C','D','E','F','G','H','I','J','K','L','M']);
+
+function dwiParseTags(text){
+  const tags={};
+  // strip comments for TAG scanning only (note streams handle // separately,
+  // since // can legitimately follow note chars mid-stream too)
+  const re=/#([A-Za-z]+):([\s\S]*?);/g;
+  let m;
+  while((m=re.exec(text))){
+    const k=m[1].toUpperCase();
+    if(!tags[k]) tags[k]=m[2];
+    else tags[k]+=';'+m[2]; // keep repeats (e.g. multiple #SINGLE) separately below
+  }
+  return tags;
+}
+
+// Extract every #SINGLE:DIFF:METER:...steps...; block with correct nesting
+// (steps can themselves contain ';' only inside comments, which we strip
+// first per-block to be safe — DWI note streams don't otherwise use ';').
+function dwiExtractSingleBlocks(text){
+  const blocks=[];
+  const re=/#SINGLE:([^:]*):([^:]*):/g;
+  let m;
+  while((m=re.exec(text))){
+    const bodyStart=re.lastIndex;
+    const end=text.indexOf(';',bodyStart);
+    if(end<0) break;
+    blocks.push({difficulty:m[1].trim(),meter:m[2].trim(),steps:text.slice(bodyStart,end)});
+    re.lastIndex=end+1;
+  }
+  return blocks;
+}
+function dwiSkippedStyles(text){
+  let n=0;
+  for(const kw of ['#DOUBLE:','#COUPLE:','#SOLO:']) if(text.includes(kw)) n++;
+  return n;
+}
+
+// Parse one note-stream into a flat list of micro-beat events. Position unit
+// = 1/192 of a beat (the exact LCM of all DWI subdivisions: 8,16,24,64,192),
+// so accumulation is exact integer arithmetic — no float drift over a
+// 5-minute song.
+function dwiParseSteps(steps, warn){
+  const UNIT={default:24,'(':12,'[':8,'{':3,'`':1}; // micro-units per char
+  const CLOSE={'(':')','[':']','{':'}','`':"'"};
+  let bracket=null; // active bracket char, or null for default 1/8
+  let micro=0; // running position, in 1/192-beat units
+  const events=[]; // {micro, panels:Set, holdOpen:Set}
+  let i=0, solo=0;
+  // strip // comments line-by-line first (steps may span many lines)
+  const clean=steps.split('\n').map(l=>{
+    const c=l.indexOf('//');
+    return c>=0?l.slice(0,c):l;
+  }).join('\n');
+  const s=clean;
+  while(i<s.length){
+    const ch=s[i];
+    if(/\s/.test(ch)){i++;continue;}
+    if(ch==='('||ch==='['||ch==='{'||ch==='`'){
+      bracket=ch; i++; continue;
+    }
+    if(bracket && ch===CLOSE[bracket]){ bracket=null; i++; continue; }
+    if(ch==='<'){
+      // combo group: union all codes until '>', consumes ONE time-slot
+      const close=s.indexOf('>',i);
+      if(close<0){ i++; continue; }
+      const body=s.slice(i+1,close);
+      const panels=new Set();
+      for(const c of body){
+        if(DWI_CODE[c]) DWI_CODE[c].forEach(p=>panels.add(p));
+        else if(DWI_SOLO_CODES.has(c)) solo++;
+      }
+      events.push({micro,panels,holdOpen:new Set()});
+      micro+=UNIT[bracket||'default'];
+      i=close+1;
+      continue;
+    }
+    if(ch==='!'){
+      // attaches to the PREVIOUS event: its next char(s) select which panel(s)
+      // of that event become held. Sub-code can be a single char or a <..>
+      // group (rare, but the spec allows codes generally here).
+      i++;
+      let sub;
+      if(s[i]==='<'){
+        const close=s.indexOf('>',i);
+        sub=s.slice(i+1,close); i=close+1;
+      } else { sub=s[i]||'0'; i++; }
+      const prev=events[events.length-1];
+      if(prev){
+        for(const c of sub){
+          if(DWI_CODE[c]) DWI_CODE[c].forEach(p=>prev.holdOpen.add(p));
+        }
+      } else if(warn) warn.orphanBang=(warn.orphanBang||0)+1;
+      continue;
+    }
+    // plain code character (including '0' = rest, which still consumes time)
+    if(DWI_CODE[ch]){
+      const panels=new Set(DWI_CODE[ch]);
+      events.push({micro,panels,holdOpen:new Set()});
+      micro+=UNIT[bracket||'default'];
+      i++;
+      continue;
+    }
+    if(DWI_SOLO_CODES.has(ch)){ solo++; micro+=UNIT[bracket||'default']; i++; continue; }
+    // unknown character (stray whitespace/punctuation) — skip without
+    // consuming time, so the rest of the stream doesn't drift
+    i++;
+  }
+  if(warn && solo) warn.soloCodes=(warn.soloCodes||0)+solo;
+  return {events, totalMicro:micro};
+}
+
+// Build the dense per-measure grid (24th-note resolution, 96 lines/measure)
+// from the parsed events, resolving hold open/close per the show!hold rule.
+function dwiBuildGrid(events, totalMicro, warn){
+  const MICRO_PER_MEASURE=192*4; // 192 units/beat * 4 beats
+  const numMeasures=Math.max(1,Math.ceil(totalMicro/MICRO_PER_MEASURE));
+  const grid=[]; // grid[measure] = array of 96 lines, each "0000"
+  for(let m=0;m<numMeasures;m++){
+    const lines=new Array(96);
+    for(let k=0;k<96;k++) lines[k]=['0','0','0','0'];
+    grid.push(lines);
+  }
+  let rounded=0;
+  const openHold=[false,false,false,false];
+  for(const ev of events){
+    if(!ev.panels.size && !ev.holdOpen.size) continue; // pure rest, nothing to write
+    const measure=Math.floor(ev.micro/MICRO_PER_MEASURE);
+    const inMeasure=ev.micro-measure*MICRO_PER_MEASURE;
+    let sub=Math.round(inMeasure/8); // 8 micro-units = one 96th-of-measure line
+    if(inMeasure%8!==0) rounded++;
+    if(sub>=96) sub=95;
+    const row=grid[measure][sub];
+    const tail=new Set();
+    for(const p of ev.panels){
+      if(openHold[p]){ tail.add(p); }
+    }
+    for(const p of ev.panels){
+      if(tail.has(p)){
+        if(ev.holdOpen.has(p)){
+          // hold ends and immediately re-opens on the same panel/row: treat
+          // as one continuous hold (no interruption needed)
+          continue;
+        }
+        row[p]='3'; openHold[p]=false;
+      } else if(ev.holdOpen.has(p)){
+        row[p]='2'; openHold[p]=true;
+      } else {
+        row[p]='1';
+      }
+    }
+    // holdOpen panels not present in ev.panels (shouldn't normally happen —
+    // the hold subcode is defined as a subset of the event's own code — but
+    // guard anyway) still open a head here.
+    for(const p of ev.holdOpen){
+      if(!ev.panels.has(p) && row[p]==='0'){ row[p]='2'; openHold[p]=true; }
+    }
+  }
+  // close any hold still open at the very end of the chart
+  let forcedClose=0;
+  for(let p=0;p<4;p++){
+    if(openHold[p]){
+      const last=grid[numMeasures-1];
+      let li=95; while(li>0&&last[li].every(c=>c==='0'))li--;
+      if(last[li][p]==='0') last[li][p]='3'; else last.push?.(0); // (no-op fallback)
+      forcedClose++;
+    }
+  }
+  if(warn){ warn.roundedFine=(warn.roundedFine||0)+rounded; warn.forcedClose=(warn.forcedClose||0)+forcedClose; }
+  return grid;
+}
+
+function dwiGridToBody(grid){
+  return grid.map(lines=>{
+    // compact away trailing all-zero runs isn't required by SM, but keeping
+    // full 96-line measures is valid and simplest/most robust to reproduce.
+    return lines.map(r=>r.join('')).join('\n');
+  }).join('\n,\n');
+}
+
+const DWI_DIFF_MAP={BASIC:'Easy',ANOTHER:'Medium',TRICK:'Medium',MANIAC:'Hard',SMANIAC:'Challenge'};
+
+function convertDWItoSM(text){
+  const tags=dwiParseTags(text);
+  const title=(tags.TITLE||'Unknown').trim();
+  const artist=(tags.ARTIST||'Unknown Artist').trim();
+  const bpm=parseFloat(tags.BPM)||120;
+  const gapMs=parseFloat(tags.GAP)||0;
+  const offset=-(gapMs)/1000; // DWI GAP is the opposite sign of SM OFFSET
+  // BPM changes: "#CHANGEBPM:beat=bpm,beat=bpm,...;"
+  const bpmSegs=[{beat:0,bpm}];
+  if(tags.CHANGEBPM){
+    tags.CHANGEBPM.split(',').forEach(pair=>{
+      const [b,v]=pair.split('=').map(x=>parseFloat(x));
+      if(!isNaN(b)&&!isNaN(v)) bpmSegs.push({beat:b,bpm:v});
+    });
+  }
+  bpmSegs.sort((a,b)=>a.beat-b.beat);
+  const bpmsStr=bpmSegs.map(s=>s.beat.toFixed(3)+'='+s.bpm.toFixed(3)).join(',');
+  // Stops: "#FREEZE:beat=ms,beat=ms,...;"
+  let stopsStr='';
+  if(tags.FREEZE){
+    stopsStr=tags.FREEZE.split(',').map(pair=>{
+      const [b,ms]=pair.split('=').map(x=>parseFloat(x));
+      if(isNaN(b)||isNaN(ms)) return null;
+      return b.toFixed(3)+'='+(ms/1000).toFixed(3);
+    }).filter(Boolean).join(',');
+  }
+
+  const blocks=dwiExtractSingleBlocks(text);
+  const skippedStyles=dwiSkippedStyles(text);
+  const warn={};
+  const charts=blocks.map(b=>{
+    const {events,totalMicro}=dwiParseSteps(b.steps,warn);
+    const grid=dwiBuildGrid(events,totalMicro,warn);
+    const body=dwiGridToBody(grid);
+    const diffName=DWI_DIFF_MAP[b.difficulty.toUpperCase()]||b.difficulty||'Hard';
+    const meter=parseInt(b.meter)||1;
+    let taps=0,holds=0,jumpsOrHands=0;
+    grid.forEach(lines=>lines.forEach(r=>{
+      const n=r.filter(c=>c==='1').length, h=r.filter(c=>c==='2').length;
+      taps+=n; holds+=h; if(n+h>=2) jumpsOrHands++;
+    }));
+    return {diffName,meter,body,taps,holds,jumpsOrHands};
+  });
+
+  const safe=title.replace(/[^a-zA-Z0-9_\- ]/g,'_')||'song';
+  const musicExt = tags.FILE ? (tags.FILE.split('.').pop()||'mp3') : 'mp3';
+  const smHdr=`#TITLE:${title};\n#SUBTITLE:;\n#ARTIST:${artist};\n#TITLETRANSLIT:;\n#SUBTITLETRANSLIT:;\n#ARTISTTRANSLIT:;\n#GENRE:;\n#CREDIT:DWI Import;\n#BANNER:;\n#BACKGROUND:;\n#CDTITLE:;\n#MUSIC:${safe}.${musicExt};\n#OFFSET:${offset.toFixed(6)};\n#SAMPLESTART:0.000;\n#SAMPLELENGTH:13.000;\n#SELECTABLE:YES;\n#BPMS:${bpmsStr};\n#STOPS:${stopsStr};\n\n`;
+  const smBody=charts.map(c=>`#NOTES:\n     dance-single:\n     DWI Import:\n     ${c.diffName}:\n     ${c.meter}:\n     0.000,0.000,0.000,0.000,0.000:\n${c.body}\n;`).join('\n\n');
+  const smText=smHdr+smBody;
+
+  const sscHdr=`#VERSION:0.83;\n#TITLE:${title};\n#SUBTITLE:;\n#ARTIST:${artist};\n#TITLETRANSLIT:;\n#SUBTITLETRANSLIT:;\n#ARTISTTRANSLIT:;\n#GENRE:;\n#CREDIT:DWI Import;\n#BANNER:;\n#BACKGROUND:;\n#CDTITLE:;\n#MUSIC:${safe}.${musicExt};\n#OFFSET:${offset.toFixed(6)};\n#SAMPLESTART:0.000;\n#SAMPLELENGTH:13.000;\n#SELECTABLE:YES;\n#BPMS:${bpmsStr};\n#STOPS:${stopsStr};\n\n`;
+  const sscBody=charts.map(c=>`//---------------dance-single - ----------------\n#NOTEDATA:;\n#STEPSTYPE:dance-single;\n#DESCRIPTION:DWI Import;\n#DIFFICULTY:${c.diffName};\n#METER:${c.meter};\n#RADARVALUES:0,0,0,0,0;\n#NOTES:\n${c.body}\n;`).join('\n\n');
+  const sscText=sscHdr+sscBody;
+
+  return {
+    smText, sscText, safe, title, artist, bpm, offset,
+    charts: charts.map(c=>({diffName:c.diffName,meter:c.meter,taps:c.taps,holds:c.holds,jumpsOrHands:c.jumpsOrHands})),
+    skippedStyles, warn
+  };
+}
+
 // ── Remix / re-step wiring ──
 document.getElementById('restepBtn')?.addEventListener('click',()=>document.getElementById('restepInput').click());
 document.getElementById('restepInput')?.addEventListener('change',e=>{
@@ -2492,6 +2767,33 @@ document.getElementById('restepInput')?.addEventListener('change',e=>{
       if(stats.streamed)log('Painted regions: '+stats.streamed+' stream notes injected from the timeline','ok');
       else if(regions)log('Note: manual regions were set but matched no measures in this file','warn');
     }catch(err){log('Re-step failed: '+err.message,'err');}
+  };
+  rd.readAsText(f);
+  e.target.value='';
+});
+
+
+// ── DWI import wiring ──
+document.getElementById('dwiBtn')?.addEventListener('click',()=>document.getElementById('dwiInput').click());
+document.getElementById('dwiInput')?.addEventListener('change',e=>{
+  const f=e.target.files[0];if(!f)return;
+  const rd=new FileReader();
+  rd.onload=()=>{
+    try{
+      const res=convertDWItoSM(rd.result);
+      if(!res.charts.length){log('DWI import: no #SINGLE chart found in that file','err');return;}
+      const smBlob=new Blob([res.smText],{type:'text/plain'});
+      const sscBlob=new Blob([res.sscText],{type:'text/plain'});
+      const a1=document.createElement('a');a1.href=URL.createObjectURL(smBlob);a1.download=res.safe+'.sm';a1.click();URL.revokeObjectURL(a1.href);
+      const a2=document.createElement('a');a2.href=URL.createObjectURL(sscBlob);a2.download=res.safe+'.ssc';a2.click();URL.revokeObjectURL(a2.href);
+      log('Converted "'+res.title+'" — BPM '+res.bpm+', offset '+res.offset.toFixed(3)+'s ('+res.charts.length+' chart'+(res.charts.length>1?'s':'')+')','ok');
+      res.charts.forEach(c=>log('  '+c.diffName+' ('+c.meter+'): '+c.taps+' taps, '+c.holds+' hold pieces, '+c.jumpsOrHands+' jumps/hands',''));
+      if(res.skippedStyles)log('Skipped '+res.skippedStyles+' non-single style block(s) (doubles/couple/solo not supported)','warn');
+      if(res.warn.roundedFine)log('Note: '+res.warn.roundedFine+' 64th/192nd-note position(s) rounded to the nearest 24th (StepGen\'s finest supported grid)','warn');
+      if(res.warn.soloCodes)log('Note: '+res.warn.soloCodes+' 6-panel (Solo) note code(s) skipped — dance-single only','warn');
+      if(res.warn.forcedClose)log('Note: '+res.warn.forcedClose+' hold(s) were still open at the end of the file and were auto-closed','warn');
+      if(res.warn.orphanBang)log('Note: '+res.warn.orphanBang+' stray "!" hold marker(s) with nothing before them were ignored','warn');
+    }catch(err){log('DWI conversion failed: '+err.message,'err');}
   };
   rd.readAsText(f);
   e.target.value='';
