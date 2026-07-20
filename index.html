@@ -154,6 +154,7 @@ canvas{width:100%;border-radius:4px;display:block;background:var(--panel);border
         <input type="file" id="dwiInput" accept=".dwi" style="display:none"/>
       </div>
       <div class="field"><label>Jump density <span id="jumpDensityVal">Medium</span></label><input type="range" id="jumpDensity" min="0" max="4" value="2" step="1"/></div>
+      <div class="field"><label>Pattern usage <span id="patUsageVal">Medium</span></label><input type="range" id="patUsage" min="0" max="3" value="2" step="1"/></div>
       <div class="field"><label>Hold density <span id="holdDensityVal">High</span></label><input type="range" id="holdDensity" min="0" max="4" value="3" step="1"/></div>
       <div class="field"><label>Onset sensitivity <span id="onsetSensVal">0.4</span></label><input type="range" id="onsetSens" min="0.1" max="0.9" value="0.55" step="0.05"/></div>
       <div class="field"><label>Fine-tune offset (s) <span id="offsetVal">0.000</span></label><input type="range" id="offset" min="-0.1" max="0.1" value="0" step="0.001"/></div>
@@ -270,38 +271,70 @@ const PATTERNS = {
   "Run R→L":       {seq:[3,1,2,0],          cat:"stream",  group:"stamina",minDiff:1},
   "Cross Run A":   {seq:[0,3,1,2],          cat:"stream",  group:"stamina",minDiff:2},
   "Cross Run B":   {seq:[1,2,0,3],          cat:"stream",  group:"stamina",minDiff:2},
-  "Staircase Up":  {seq:[0,2,1,3,1,2],      cat:"stream",  group:"stamina",minDiff:2},
-  "Staircase Dn":  {seq:[3,1,2,0,2,1],      cat:"stream",  group:"stamina",minDiff:2},
+  "Staircase Up":  {seq:[0,1,2,3],          cat:"stream",  group:"stamina",minDiff:2},
+  "Staircase Dn":  {seq:[3,2,1,0],          cat:"stream",  group:"stamina",minDiff:2},
   "Zigzag A":      {seq:[0,2,0,3,1,3],      cat:"stream",  group:"stamina",minDiff:3},
   "Zigzag B":      {seq:[3,1,3,0,2,0],      cat:"stream",  group:"stamina",minDiff:3},
-  "Box CW":        {seq:[0,2,1,3],          cat:"box",     group:"stamina",minDiff:3},
-  "Box CCW":       {seq:[1,3,0,2],          cat:"box",     group:"stamina",minDiff:3},
+  // Box CW / Box CCW removed: with only 4 panels, their 4-note sequences were
+  // mathematically IDENTICAL to Run L→R and Spread B respectively — two
+  // different names for the exact same arrow order, which is exactly what let
+  // a toggled-off "Box" reappear under "Run" or "Spread" instead. Box Full (an
+  // 8-note cycle that actually returns near its start) is the one genuinely
+  // distinct box shape and is kept.
   "Box Full":      {seq:[0,2,1,3,0,3,1,2],  cat:"box",     group:"stamina",minDiff:5},
   "Spiral In":     {seq:[0,2,1,3,0,2],      cat:"spiral",  group:"stamina",minDiff:4},
   "Spiral Out":    {seq:[1,3,0,2,1,3],      cat:"spiral",  group:"stamina",minDiff:4},
-  "Sweep A":       {seq:[0,3,0,2,1,2],      cat:"spiral",  group:"stamina",minDiff:4},
-  "Sweep B":       {seq:[3,0,3,1,2,1],      cat:"spiral",  group:"stamina",minDiff:4},
+  "Sweep A":       {seq:[0,1,2,3,2,1,0],    cat:"sweep",   group:"stamina",minDiff:4},
+  "Sweep B":       {seq:[3,2,1,0,1,2,3],    cat:"sweep",   group:"stamina",minDiff:4},
   // ── TECH: intentionally non-alternating ──────────────────────────
   // (Names/shapes checked against ITG Wiki tech notation + DDRCommunity pattern
   // guide: jacks = repeated same arrow; sideswitch = repeated SIDE panel with
   // alternating feet, usually entered via crossover; candle = a foot passing
   // over the center, e.g. Up-Left-Down; drill = long two-arrow alternation.)
-  "Jacks L":       {seq:[0,1,1,2],          cat:"gallop",     group:"tech",   minDiff:3},
-  "Jacks R":       {seq:[3,2,2,1],          cat:"gallop",     group:"tech",   minDiff:3},
+  "Jacks L":       {seq:[0,0,0],            cat:"gallop",     group:"tech",   minDiff:3},
+  "Jacks R":       {seq:[3,3,3],            cat:"gallop",     group:"tech",   minDiff:3},
   "Candle A":      {seq:[2,0,1],            cat:"candle",     group:"tech",   minDiff:3},
   "Candle B":      {seq:[1,3,2],            cat:"candle",     group:"tech",   minDiff:3},
-  "Crossover L":   {seq:[0,1,3,2],          cat:"crossover",  group:"tech",   minDiff:4},
-  "Crossover R":   {seq:[3,2,0,1],          cat:"crossover",  group:"tech",   minDiff:4},
+  "Crossover L-D-R":{seq:[0,1,3],noMirror:true, cat:"crossover", group:"tech", minDiff:4},
+  "Crossover L-U-R":{seq:[0,2,3],noMirror:true, cat:"crossover", group:"tech", minDiff:4},
+  "Crossover R-D-L":{seq:[3,1,0],noMirror:true, cat:"crossover", group:"tech", minDiff:4},
+  "Crossover R-U-L":{seq:[3,2,0],noMirror:true, cat:"crossover", group:"tech", minDiff:4},
   "Drill LD":      {seq:[0,1,0,1,0,1],      cat:"drill",      group:"tech",   minDiff:4},
   "Drill RU":      {seq:[3,2,3,2,3,2],      cat:"drill",      group:"tech",   minDiff:4},
-  "Anchor L":      {seq:[0,2,0,1,0,3],      cat:"anchor",     group:"tech",   minDiff:4},
-  "Anchor R":      {seq:[3,1,3,2,3,0],      cat:"anchor",     group:"tech",   minDiff:4},
-  "Footswitch L":  {seq:[0,0,1,2],          cat:"footswitch", group:"tech",   minDiff:5},
-  "Footswitch R":  {seq:[3,3,2,1],          cat:"footswitch", group:"tech",   minDiff:5},
+  "Anchor L":      {seq:[0,2,0,3,0,1,0,3,0],cat:"anchor",     group:"tech",   minDiff:4},
+  "Anchor R":      {seq:[3,1,3,0,3,2,3,0,3],cat:"anchor",     group:"tech",   minDiff:4},
+  "Candle Anchor L":{seq:[0,2,0,1,0,2,0,1,0],cat:"anchor",     group:"tech",   minDiff:4},
+  "Candle Anchor R":{seq:[3,1,3,2,3,1,3,2,3],cat:"anchor",     group:"tech",   minDiff:4},
+  "Footswitch L":  {seq:[0,2,2,3],          cat:"footswitch", group:"tech",   minDiff:5},
+  "Footswitch R":  {seq:[3,1,1,0],          cat:"footswitch", group:"tech",   minDiff:5},
+  "Footswitch R-U-U-L":{seq:[3,2,2,0],      cat:"footswitch", group:"tech",   minDiff:5},
+  "Footswitch L-D-D-R":{seq:[0,1,1,3],      cat:"footswitch", group:"tech",   minDiff:5},
   "Sideswitch L":  {seq:[1,0,0,2],          cat:"sideswitch", group:"tech",   minDiff:6},
   "Sideswitch R":  {seq:[2,3,3,1],          cat:"sideswitch", group:"tech",   minDiff:6},
   "Spread A":      {seq:[2,0,3,1],          cat:"split",      group:"tech",   minDiff:7},
   "Spread B":      {seq:[1,3,0,2],          cat:"split",      group:"tech",   minDiff:7},
+  // ── Added from a direct stamina-community pattern-jargon reference doc ──
+  "Triangle R-U-R": {seq:[3,2,3],           cat:"triangle",   group:"stamina",minDiff:2},
+  "Triangle L-U-L": {seq:[0,2,0],           cat:"triangle",   group:"stamina",minDiff:2},
+  "Triangle L-D-L": {seq:[0,1,0],           cat:"triangle",   group:"stamina",minDiff:2},
+  "Triangle R-D-R": {seq:[3,1,3],           cat:"triangle",   group:"stamina",minDiff:2},
+  "Box LD":         {seq:[0,1,0,1],         cat:"box",        group:"stamina",minDiff:2},
+  "Box RU":         {seq:[3,2,3,2],         cat:"box",        group:"stamina",minDiff:2},
+  "Drill LR":       {seq:[0,3,0,3,0,3],     cat:"drill",      group:"tech",   minDiff:4},
+  "Drill UD":       {seq:[2,1,2,1,2,1],     cat:"drill",      group:"tech",   minDiff:4},
+  "Circular Footswitch L":{seq:[0,2,2,3,1,1],cat:"footswitch",group:"tech",   minDiff:5},
+  "Circular Footswitch R":{seq:[3,1,1,0,2,2],cat:"footswitch",group:"tech",   minDiff:5},
+  "Comfy Footswitch L":{seq:[0,1,1,3,0,2,2,3],cat:"footswitch",group:"tech", minDiff:5},
+  "Comfy Footswitch R":{seq:[3,2,2,0,3,1,1,0],cat:"footswitch",group:"tech", minDiff:5},
+  "Candle Swing A": {seq:[2,0,1,2,3,1],     cat:"candle",     group:"tech",   minDiff:3},
+  "Candle Swing B": {seq:[1,3,2,1,0,2],     cat:"candle",     group:"tech",   minDiff:3},
+  "Spiral A":       {seq:[0,1,2,3,1,3],     cat:"spiral",     group:"stamina",minDiff:5},
+  "Spiral B":       {seq:[3,2,1,0,2,0],     cat:"spiral",     group:"stamina",minDiff:5},
+  "Luchi":          {seq:[0,1,0,3,2,3,1,3,0,2,0,1],cat:"named",group:"tech",  minDiff:7},
+  "Copter":         {seq:[3,2,1,0,2,1,3,2,1,0,2,1],cat:"named",group:"tech",  minDiff:7},
+
+  "Spin 360":      {seq:[0,2,3,1],          cat:"spin",    group:"tech",   minDiff:6},
+  "Spin 270":      {seq:[0,1,3,2,3,1,0],    cat:"spin",    group:"tech",   minDiff:6},
 };
 
 // Tag each pattern with whether it strictly alternates feet, and validate
@@ -320,12 +353,18 @@ const PATTERNS = {
 
 // Auto-generate mirrored versions (L↔R swap)
 const MIRROR_MAP = {0:3,1:2,2:1,3:0};
+const baseSeqKeys=new Set(Object.values(PATTERNS).map(p=>p.seq.join(',')));
 Object.keys(PATTERNS).forEach(name=>{
   const p=PATTERNS[name];
+  if(p.noMirror) return; // this pattern already defines all its own orientations
   const m=p.seq.map(x=>MIRROR_MAP[x]);
+  const mkey=m.join(',');
+  if(mkey===p.seq.join(',')) return; // self-mirror, nothing new to add
+  if(baseSeqKeys.has(mkey)) return; // ALREADY covered by another hand-authored
+                                     // pattern (its natural L/R twin) — skip
+                                     // the redundant duplicate chip entirely
   const mn=name+' ⟳';
-  if(JSON.stringify(m)!==JSON.stringify(p.seq))
-    PATTERNS[mn]={seq:m,cat:p.cat,group:p.group,minDiff:p.minDiff,mirror:true};
+  PATTERNS[mn]={seq:m,cat:p.cat,group:p.group,minDiff:p.minDiff,mirror:true};
 });
 
 // All patterns start active EXCEPT crossovers — crossovers are a deliberate
@@ -420,6 +459,8 @@ const tick=()=>new Promise(r=>setTimeout(r,0));
 document.getElementById('diffCount').addEventListener('change',updateDiffBadges);
 // Jump & Hold density sliders show named levels instead of a number.
 const JUMP_LABELS=['None','Low','Medium','High','Max'];
+const PAT_LABELS=['Off','Low','Medium','High'];
+document.getElementById('patUsage')?.addEventListener('input',e=>{document.getElementById('patUsageVal').textContent=PAT_LABELS[+e.target.value]||'Medium';});
 [['jumpDensity','jumpDensityVal'],['holdDensity','holdDensityVal']].forEach(([id,vid])=>{
   const el=document.getElementById(id);
   if(!el)return;
@@ -1211,11 +1252,44 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   // Choose a panel for the given foot. A foot freely uses its home outer arrow
   // and BOTH center arrows (natural pivoting/facing). The opposite outer arrow
   // is a real crossover and is rare.
-  function choosePanel(candidates,foot,contourBias,drillMult=1){
+  // ── SHAPE SUPPRESSION ──────────────────────────────────────────────
+  // Toggling a pattern off previously only stopped US from injecting it —
+  // it could never stop the weighted chooser from independently landing on
+  // that exact shape by chance (measured baseline: several % of all 4-note
+  // windows, regardless of any toggle). This actually blocks it: precompute
+  // every INACTIVE pattern's sequence once per chart, and whenever a
+  // candidate panel would COMPLETE one (i.e. the recent history + this
+  // candidate exactly matches a toggled-off shape), that candidate is
+  // filtered out before weighting — with a fallback to the unfiltered list
+  // if that would leave no candidates at all, so play is never blocked
+  // outright.
+  const inactiveSeqs=Object.keys(PATTERNS)
+    .filter(n=>!activePats.has(n))
+    .map(n=>PATTERNS[n].seq)
+    .filter(seq=>seq.length>=3 && seq.length<=8);
+  function completesInactivePattern(candidate){
+    for(const seq of inactiveSeqs){
+      const L=seq.length;
+      if(seq[L-1]!==candidate) continue;
+      if(recentNotes.length<L-1) continue;
+      let match=true;
+      const base=recentNotes.length-(L-1);
+      for(let i=0;i<L-1;i++){ if(recentNotes[base+i]!==seq[i]){match=false;break;} }
+      if(match) return true;
+    }
+    return false;
+  }
+  function choosePanel(candidates,foot,contourBias,drillMult=1,trackHistory=true){
+    if(candidates.length>1){
+      const filtered=candidates.filter(p=>!completesInactivePattern(p));
+      if(filtered.length) candidates=filtered;
+    }
     if(candidates.length===1){
       const p=candidates[0];
-      recentTransitions.push(lastPanel+'>'+p); if(recentTransitions.length>6)recentTransitions.shift();
-      recentNotes.push(p); if(recentNotes.length>8)recentNotes.shift();
+      if(trackHistory){
+        recentTransitions.push(lastPanel+'>'+p); if(recentTransitions.length>6)recentTransitions.shift();
+        recentNotes.push(p); if(recentNotes.length>8)recentNotes.shift();
+      }
       return p;
     }
     const maxUse=Math.max(...candidates.map(p=>panelUse[p]),1);
@@ -1242,8 +1316,10 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     });
     let total=weights.reduce((a,b)=>a+b,0), r=Math.random()*total, chosen=candidates[candidates.length-1];
     for(let i=0;i<candidates.length;i++){r-=weights[i];if(r<=0){chosen=candidates[i];break;}}
-    recentTransitions.push(lastPanel+'>'+chosen); if(recentTransitions.length>6)recentTransitions.shift();
-    recentNotes.push(chosen); if(recentNotes.length>8)recentNotes.shift();
+    if(trackHistory){
+      recentTransitions.push(lastPanel+'>'+chosen); if(recentTransitions.length>6)recentTransitions.shift();
+      recentNotes.push(chosen); if(recentNotes.length>8)recentNotes.shift();
+    }
     return chosen;
   }
   // commit a step for a SPECIFIC foot (foot tracked independently of panel)
@@ -1263,6 +1339,88 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     return p;
   }
   let lastStepRow=-99;
+  // ── PATTERN INJECTION ──────────────────────────────────────────────
+  // Toggled patterns previously did nothing but gate whether crossovers were
+  // allowed at all. Now, in genuinely tight stream sections, an active
+  // pattern's exact arrow sequence can be sprinkled in directly — respecting
+  // foot alternation and reachability (so a crossover-shaped pattern still
+  // can't appear unless crossovers are actually permitted), gated by the
+  // "Pattern usage" slider so it stays an accent, not a takeover of the
+  // engine's own well-tuned flow.
+  const patUsageLvl=+(document.getElementById('patUsage')?.value ?? 2);
+  const patChance=[0,0.15,0.35,0.6][patUsageLvl]||0;
+  const patCooldownRows=[0,RPB*6,RPB*3,RPB*1.5][patUsageLvl]||RPB*3;
+  let lastPatRow=-99999;
+  function patternFits(seq,foot0){
+    let foot=foot0;
+    for(const p of seq){
+      if(!reachablePanels(foot).includes(p)) return false;
+      foot=(foot==='L')?'R':'L';
+    }
+    return true;
+  }
+  function tryInjectPattern(kept,k,block){
+    if(patChance<=0 || Math.random()>patChance) return 0;
+    if((kept[k].row-lastPatRow)<patCooldownRows) return 0;
+    const cands=Object.keys(PATTERNS).filter(n=>activePats.has(n)&&PATTERNS[n].minDiff<=block);
+    if(!cands.length) return 0;
+    for(let attempt=0;attempt<4;attempt++){
+      const name=cands[Math.floor(Math.random()*cands.length)];
+      const seq=PATTERNS[name].seq, L=seq.length;
+      if(k+L>kept.length) continue;
+      let ok=true;
+      for(let j=0;j<L;j++){
+        const ev=kept[k+j];
+        if(!ev||ev.e.filler||notes[ev.row]!==-1){ok=false;break;}
+        if(j>0 && (ev.row-kept[k+j-1].row)>2){ok=false;break;}
+      }
+      if(!ok) continue;
+      const foot0=(lastFoot==='L')?'R':'L';
+      if(!patternFits(seq,foot0)) continue;
+      // SEAM CHECK: the pattern itself is active (allowed), but its early
+      // notes combine with whatever came just BEFORE it — if that seam
+      // happens to complete a DIFFERENT, toggled-OFF pattern, this injection
+      // must be rejected (try another candidate) rather than silently letting
+      // a forbidden shape appear at the boundary. Only checked against
+      // PRE-EXISTING history, though — a longer pattern (e.g. a 4-note Box)
+      // often structurally CONTAINS a shorter one (e.g. a 3-note Triangle) as
+      // its own prefix; that's an unavoidable consequence of the active
+      // pattern's own shape, not a real boundary leak, so it must not be
+      // rejected just because the shorter shape happens to be inactive.
+      const originalLen=recentNotes.length;
+      const simHistory=recentNotes.slice();
+      let seamOk=true;
+      for(let j=0;j<L;j++){
+        const cand=seq[j];
+        let hit=false;
+        for(const iseq of inactiveSeqs){
+          const IL=iseq.length;
+          if(iseq[IL-1]!==cand) continue;
+          if(simHistory.length<IL-1) continue;
+          const base=simHistory.length-(IL-1);
+          if(base>=originalLen) continue; // purely internal — not a real leak
+          let m=true;
+          for(let ii=0;ii<IL-1;ii++){ if(simHistory[base+ii]!==iseq[ii]){m=false;break;} }
+          if(m){hit=true;break;}
+        }
+        if(hit){seamOk=false;break;}
+        simHistory.push(cand);
+      }
+      if(!seamOk) continue;
+      let foot=foot0;
+      for(let j=0;j<L;j++){
+        const row=kept[k+j].row, p=seq[j], prevPanel=lastPanel;
+        commit(row,p,foot);
+        recentTransitions.push(prevPanel+'>'+p); if(recentTransitions.length>6)recentTransitions.shift();
+        recentNotes.push(p); if(recentNotes.length>8)recentNotes.shift();
+        lastStepRow=row;
+        foot=(foot==='L')?'R':'L';
+      }
+      lastPatRow=kept[k+L-1].row;
+      return L;
+    }
+    return 0;
+  }
   function placeStep(row,contourBias){
     if(row<0||row>=totalRows||notes[row]!==-1)return;
     const foot=(lastFoot==='L')?'R':'L';
@@ -1289,7 +1447,17 @@ function generateChart(block,bpm,energy,duration,manualRegions){
   }
   function placeJump(row){
     if(row<0||row>=totalRows||notes[row]!==-1||jumpRows[row])return;
-    const lp=choosePanel([0,1],'L',0), rp=choosePanel([2,3],'R',0);
+    // The LEFT panel is what's stored in notes[row] — the one visibly "in
+    // sequence" on the chart — so it tracks history normally (contributes to
+    // pattern-shape matching like any other step). The RIGHT panel is
+    // simultaneous with it, not a separate sequential step, so it's still
+    // checked against the suppression list (a toggled-off shape can't sneak
+    // in via a jump's second arrow either) but does NOT get pushed into
+    // recentNotes/recentTransitions afterward — that was the original bug:
+    // a jump's second panel silently acting as an invisible "middle note" of
+    // a 3-4 note shape the suppression could never see as a coherent whole.
+    const lp=choosePanel([0,1],'L',0);
+    const rp=choosePanel([2,3],'R',0,1,false);
     notes[row]=lp; jumpRows[row]=[lp,rp];
     panelUse[lp]++; panelUse[rp]++;
     leftFootPanel=lp; rightFootPanel=rp;
@@ -1644,6 +1812,11 @@ function generateChart(block,bpm,energy,duration,manualRegions){
       else placeStep(row,cb);
     }
     else{
+      let consumed=0;
+      if(!e.filler && prevGap>0 && prevGap<=2 && nextGap>0 && nextGap<=2){
+        consumed=tryInjectPattern(kept,k,block);
+      }
+      if(consumed>1){ k+=consumed-1; placed+=consumed; continue; }
       placeStep(row,cb);
       if(fineQuant && !e.filler && !kept[k].manual && e.t!==undefined && notes[row]!==-1){
         let pos=Math.round(e.t/fineUnit);
@@ -2150,6 +2323,10 @@ function restepFile(text,regions,opts){
 }
 function restepChunk(chunk,stats,regions,opts){
   const noJumps=!!(opts&&opts.noJumps);
+  // pull the chart's own #METER (SM's 4th colon-field) for pattern minDiff
+  // gating — same convention the generator uses via its `block` parameter.
+  const meterMatch=chunk.match(/#NOTES:\s*\n[^\n]*:\s*\n[^\n]*:\s*\n[^\n]*:\s*\n\s*(\d+):/);
+  const meterNum=meterMatch?parseInt(meterMatch[1]):5;
   // painted timeline regions (measure ranges) become generated streams:
   // s16 = note every 16th, s8 = every 8th — panels via the same chooser.
   const regionOf=(m)=>{if(!regions)return null;for(const r of regions){if(m>=r.startMeas&&m<=r.endMeas)return r.type;}return null;};
@@ -2191,8 +2368,32 @@ function restepChunk(chunk,stats,regions,opts){
     recentNotes.push(p);if(recentNotes.length>8)recentNotes.shift();
     lastFoot=foot;lastPanel=p;panelUse[p]++;
   };
+  // Shape suppression, ported from the generator's own choosePanel (see that
+  // function's comment for the full rationale): a toggled-off pattern must
+  // not be able to complete during re-stepping either, not just in fresh
+  // generation.
+  const inactiveSeqsRS=Object.keys(PATTERNS)
+    .filter(n=>!activePats.has(n))
+    .map(n=>PATTERNS[n].seq)
+    .filter(seq=>seq.length>=3 && seq.length<=8);
+  const completesInactiveRS=(candidate)=>{
+    for(const seq of inactiveSeqsRS){
+      const L=seq.length;
+      if(seq[L-1]!==candidate) continue;
+      if(recentNotes.length<L-1) continue;
+      let m=true;
+      const base=recentNotes.length-(L-1);
+      for(let i=0;i<L-1;i++){ if(recentNotes[base+i]!==seq[i]){m=false;break;} }
+      if(m) return true;
+    }
+    return false;
+  };
   const choose=(cands,foot,drillMult)=>{
     if(!cands.length)return -1;
+    if(cands.length>1){
+      const filtered=cands.filter(p=>!completesInactiveRS(p));
+      if(filtered.length) cands=filtered;
+    }
     if(cands.length===1){return cands[0];}
     const maxUse=Math.max(...cands.map(p=>panelUse[p]),1);
     const tc={};for(const t of recentTrans){const tp=+t.split('>')[1];tc[tp]=(tc[tp]||0)+1;}
@@ -2208,6 +2409,85 @@ function restepChunk(chunk,stats,regions,opts){
     return cands[cands.length-1];
   };
   const reach=(foot)=>{let p=[0,1,2,3];if(!crossoversAllowed)p=p.filter(x=>!isCross(x,foot));return p;};
+  // ── PATTERN INJECTION (re-step) ── mirrors the generator's tryInjectPattern:
+  // toggled-ON patterns get woven directly into tight runs of plain single
+  // taps, respecting foot alternation, reachability, difficulty floor, and a
+  // seam-check against toggled-OFF shapes — same guarantees as fresh
+  // generation, now also honored when re-stepping an uploaded file.
+  const patUsageLvlRS=+(document.getElementById('patUsage')?.value ?? 2);
+  const patChanceRS=[0,0.15,0.35,0.6][patUsageLvlRS]||0;
+  const patCooldownLinesRS=[0,6,3,1.5][patUsageLvlRS]||3; // in note-lines, not rows
+  let lastPatLineRS=-99999;
+  const patternFitsRS=(seq,foot0)=>{
+    let foot=foot0;
+    for(const p of seq){ if(!reach(foot).includes(p)) return false; foot=(foot==='L')?'R':'L'; }
+    return true;
+  };
+  function tryInjectRS(li){
+    if(patChanceRS<=0 || Math.random()>patChanceRS) return 0;
+    if((li-lastPatLineRS)<patCooldownLinesRS) return 0;
+    if(heldCols().length) return 0; // keep interaction with open holds out of scope
+    const cands=Object.keys(PATTERNS).filter(n=>activePats.has(n)&&PATTERNS[n].minDiff<=meterNum);
+    if(!cands.length) return 0;
+    for(let attempt=0;attempt<4;attempt++){
+      const name=cands[Math.floor(Math.random()*cands.length)];
+      const seq=PATTERNS[name].seq, L=seq.length;
+      if(li+L>lines.length) continue;
+      let ok=true, rowsInfo=[], prevBeat=null;
+      for(let j=0;j<L;j++){
+        const li2=li+j, l2=lines[li2];
+        if(!isNote(l2)){ok=false;break;}
+        const m2=measureOf[li2];
+        if(regionOf(m2)){ok=false;break;} // don't clash with painted stream regions
+        const ch2=l2.trim().split('');
+        const arr2=[];for(let c=0;c<4;c++)if(ch2[c]==='1'||ch2[c]==='2'||ch2[c]==='4')arr2.push(c);
+        if(arr2.length!==1||ch2[arr2[0]]!=='1'){ok=false;break;} // plain taps only
+        const k2=lineInM[li2],L2=mSize[m2]||16;
+        const bp2=m2*4+k2*4/L2;
+        if(prevBeat!==null && (bp2-prevBeat)>0.55){ok=false;break;}
+        prevBeat=bp2;
+        rowsInfo.push({l:l2,bp:bp2});
+      }
+      if(!ok) continue;
+      const foot0=(lastFoot==='L')?'R':'L';
+      if(!patternFitsRS(seq,foot0)) continue;
+      // (see the generator's identical seam-check for the full rationale —
+      // only reject genuine boundary leaks into PRE-EXISTING history, not a
+      // longer pattern's unavoidable internal self-completion of a shorter
+      // shape it structurally contains as its own prefix)
+      const originalLenRS=recentNotes.length;
+      const simHist=recentNotes.slice();
+      let seamOk=true;
+      for(let j=0;j<L;j++){
+        const cand=seq[j]; let hit=false;
+        for(const iseq of inactiveSeqsRS){
+          const IL=iseq.length;
+          if(iseq[IL-1]!==cand) continue;
+          if(simHist.length<IL-1) continue;
+          const base=simHist.length-(IL-1);
+          if(base>=originalLenRS) continue;
+          let m=true;
+          for(let ii=0;ii<IL-1;ii++){ if(simHist[base+ii]!==iseq[ii]){m=false;break;} }
+          if(m){hit=true;break;}
+        }
+        if(hit){seamOk=false;break;}
+        simHist.push(cand);
+      }
+      if(!seamOk) continue;
+      let foot=foot0;
+      for(let j=0;j<L;j++){
+        const p=seq[j];
+        const res2=['0','0','0','0']; res2[p]='1';
+        out.push(rowsInfo[j].l.replace(rowsInfo[j].l.trim(), res2.join('')));
+        commit(p,foot); stats.taps++;
+        foot=(foot==='L')?'R':'L';
+      }
+      lastBeat=rowsInfo[L-1].bp;
+      lastPatLineRS=li+L-1;
+      return L;
+    }
+    return 0;
+  }
   // holds: original column → {col:newColumn, foot}
   const open={};
   const heldCols=()=>Object.values(open).map(o=>o.col);
@@ -2235,8 +2515,9 @@ function restepChunk(chunk,stats,regions,opts){
       out.push(indent+res.join(''));
     }
   };
-  lines.forEach((l,li)=>{
-    if(!isNote(l)){out.push(l);return;}
+  for(let li=0; li<lines.length; li++){
+    const l=lines[li];
+    if(!isNote(l)){out.push(l);continue;}
     const mIdx=measureOf[li];
     const paintType=regionOf(mIdx);
     if(paintType==='s16'||paintType==='s8'){
@@ -2244,7 +2525,7 @@ function restepChunk(chunk,stats,regions,opts){
         streamedM.add(mIdx);
         emitStreamMeasure(mIdx,paintType,(l.match(/^\s*/)||[''])[0]);
       }
-      return; // original note lines of a painted measure are dropped
+      continue; // original note lines of a painted measure are dropped
     }
     const ch=l.trim().split('');
     const m=measureOf[li],k=lineInM[li],L=mSize[m]||16;
@@ -2269,6 +2550,10 @@ function restepChunk(chunk,stats,regions,opts){
     const gap=beatPos-lastBeat;
     const dm=(gap>0&&gap<=0.55)?2.0:1.0;
     const freeCols=(list)=>list.filter(p=>!held.includes(p)&&res[p]==='0');
+    if(arrows.length===1 && ch[arrows[0]]==='1' && gap>0 && gap<=0.55){
+      const consumed=tryInjectRS(li);
+      if(consumed>1){ li+=consumed-1; continue; }
+    }
     if(arrows.length===1){
       const c=arrows[0];
       let foot=(lastFoot==='L')?'R':'L';
@@ -2283,7 +2568,19 @@ function restepChunk(chunk,stats,regions,opts){
         if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot};stats.holds++;}}
     }else if(arrows.length===2){
       // jump: left foot from {0,1}, right foot from {2,3} (mirrors placeJump)
-      let lp=choose(freeCols([0,1]),'L',1),rp=choose(freeCols([2,3]),'R',1);
+      let lp=choose(freeCols([0,1]),'L',1);
+      // lp is the panel that's "in sequence" for pattern-tracking (the
+      // primary/first-chosen one) — push it to history BEFORE choosing the
+      // simultaneous right-foot panel, so rp's own suppression check sees it
+      // as context. rp itself does NOT get pushed afterward — a jump is a
+      // simultaneous event, not two sequential steps, so its partner panel
+      // must not become an invisible "middle note" of some other shape
+      // (mirrors the same fix in the generator's own placeJump).
+      if(lp>=0){
+        recentTrans.push(lastPanel+'>'+lp); if(recentTrans.length>6)recentTrans.shift();
+        recentNotes.push(lp); if(recentNotes.length>8)recentNotes.shift();
+      }
+      let rp=choose(freeCols([2,3]),'R',1);
       if(lp<0)lp=freeCols([0,1,2,3])[0]??-1;
       if(rp<0)rp=freeCols([0,1,2,3].filter(p=>p!==lp))[0]??-1;
       const dst=[lp,rp].filter(p=>p>=0).sort((a,b)=>a-b);
@@ -2292,7 +2589,7 @@ function restepChunk(chunk,stats,regions,opts){
         if(i<dst.length){const p=dst[i];res[p]=ch[c];panelUse[p]++;
           if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot:p<=1?'L':'R'};stats.holds++;}}
       });
-      if(dst.length===2){recentNotes=[];lastPanel=dst[1];stats.jumps++;}
+      if(dst.length===2){lastPanel=dst[1];stats.jumps++;}
     }else if(arrows.length>2){
       // hands: keep on free columns, original order
       const free=freeCols([0,1,2,3]);
@@ -2312,7 +2609,7 @@ function restepChunk(chunk,stats,regions,opts){
       if(!'01234M'.includes(ch[c])&&res[c]==='0'&&!held.includes(c))res[c]=ch[c];
     }
     out.push(l.replace(l.trim(),res.join('')));
-  });
+  }
   return out.join('\n');
 }
 
