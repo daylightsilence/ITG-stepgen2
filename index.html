@@ -1377,6 +1377,7 @@ function generateChart(block,bpm,energy,duration,manualRegions){
       if(!ok) continue;
       const foot0=(lastFoot==='L')?'R':'L';
       if(!patternFits(seq,foot0)) continue;
+      if(seq[0]===lastPanel) continue; // first note would repeat the panel that was just placed
       // SEAM CHECK: the pattern itself is active (allowed), but its early
       // notes combine with whatever came just BEFORE it — if that seam
       // happens to complete a DIFFERENT, toggled-OFF pattern, this injection
@@ -1456,11 +1457,24 @@ function generateChart(block,bpm,energy,duration,manualRegions){
     // recentNotes/recentTransitions afterward — that was the original bug:
     // a jump's second panel silently acting as an invisible "middle note" of
     // a 3-4 note shape the suppression could never see as a coherent whole.
-    const lp=choosePanel([0,1],'L',0);
-    const rp=choosePanel([2,3],'R',0,1,false);
+    const preJumpLastPanel=lastPanel;
+    const lch=[0,1].filter(p=>p!==preJumpLastPanel); const lcands=lch.length?lch:[0,1];
+    const rch=[2,3].filter(p=>p!==preJumpLastPanel); const rcands=rch.length?rch:[2,3];
+    const lp=choosePanel(lcands,'L',0);
+    const rp=choosePanel(rcands,'R',0,1,false);
     notes[row]=lp; jumpRows[row]=[lp,rp];
     panelUse[lp]++; panelUse[rp]++;
     leftFootPanel=lp; rightFootPanel=rp;
+    // placeJump previously never updated lastPanel/lastFoot at all, leaving
+    // them stale (whatever they were BEFORE the jump). That let the very
+    // next note's lastPanel-exclusion check compare against the wrong value
+    // — it had no idea the jump had just displayed lp — so the next tap
+    // could legally repeat the jump's own panel immediately, producing the
+    // same-arrow-twice-in-a-row "double step" look. lp is treated as the
+    // primary/displayed panel throughout this function, so it becomes the
+    // new lastPanel; foot alternation continues from the Left foot that
+    // chose it.
+    lastPanel=lp;
   }
 
   // ── Build the musical event list from onsets ──
@@ -2451,6 +2465,7 @@ function restepChunk(chunk,stats,regions,opts){
       if(!ok) continue;
       const foot0=(lastFoot==='L')?'R':'L';
       if(!patternFitsRS(seq,foot0)) continue;
+      if(seq[0]===lastPanel) continue; // first note would repeat the panel that was just placed
       // (see the generator's identical seam-check for the full rationale —
       // only reject genuine boundary leaks into PRE-EXISTING history, not a
       // longer pattern's unavoidable internal self-completion of a shorter
@@ -2567,8 +2582,11 @@ function restepChunk(chunk,stats,regions,opts){
       if(p>=0){res[p]=ch[c];commit(p,foot);stats.taps++;
         if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot};stats.holds++;}}
     }else if(arrows.length===2){
-      // jump: left foot from {0,1}, right foot from {2,3} (mirrors placeJump)
-      let lp=choose(freeCols([0,1]),'L',1);
+      // jump: left foot from {0,1}, right foot from {2,3} (mirrors placeJump).
+      // Excludes lastPanel too (a jump's own panel must not repeat whatever
+      // arrow was just hit — same fix as the generator's own placeJump).
+      const lch0=freeCols([0,1]).filter(p=>p!==lastPanel); const lcands0=lch0.length?lch0:freeCols([0,1]);
+      let lp=choose(lcands0,'L',1);
       // lp is the panel that's "in sequence" for pattern-tracking (the
       // primary/first-chosen one) — push it to history BEFORE choosing the
       // simultaneous right-foot panel, so rp's own suppression check sees it
@@ -2580,7 +2598,8 @@ function restepChunk(chunk,stats,regions,opts){
         recentTrans.push(lastPanel+'>'+lp); if(recentTrans.length>6)recentTrans.shift();
         recentNotes.push(lp); if(recentNotes.length>8)recentNotes.shift();
       }
-      let rp=choose(freeCols([2,3]),'R',1);
+      const rch0=freeCols([2,3]).filter(p=>p!==lastPanel); const rcands0=rch0.length?rch0:freeCols([2,3]);
+      let rp=choose(rcands0,'R',1);
       if(lp<0)lp=freeCols([0,1,2,3])[0]??-1;
       if(rp<0)rp=freeCols([0,1,2,3].filter(p=>p!==lp))[0]??-1;
       const dst=[lp,rp].filter(p=>p>=0).sort((a,b)=>a-b);
@@ -2589,7 +2608,11 @@ function restepChunk(chunk,stats,regions,opts){
         if(i<dst.length){const p=dst[i];res[p]=ch[c];panelUse[p]++;
           if(ch[c]==='2'||ch[c]==='4'){open[c]={col:p,foot:p<=1?'L':'R'};stats.holds++;}}
       });
-      if(dst.length===2){lastPanel=dst[1];stats.jumps++;}
+      // Same fix as the generator's placeJump: lastPanel/lastFoot must reflect
+      // the jump's own primary (lp) panel afterward, or the very next note's
+      // lastPanel-exclusion check compares against a stale pre-jump value and
+      // can legally repeat the jump's own panel immediately.
+      if(dst.length===2){lastPanel=lp; stats.jumps++;}
     }else if(arrows.length>2){
       // hands: keep on free columns, original order
       const free=freeCols([0,1,2,3]);
